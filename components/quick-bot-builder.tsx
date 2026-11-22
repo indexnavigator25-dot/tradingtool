@@ -8,19 +8,6 @@ import { Label } from '@/components/ui/label';
 import { useAppTranslations } from '@/components/custom/i18n-provider';
 import {
   compileUserTradingStrategy,
-  EVEN_ODD_CONFIRMATION_WINDOW,
-  EVEN_ODD_SIGNAL_PERCENT,
-  EVEN_ODD_SIGNAL_WINDOW,
-  GROUP_A_CONFIRMATION_WINDOW,
-  GROUP_A_DIFFERS_BASELINE_PERCENT,
-  GROUP_A_SIGNAL_WINDOW,
-  GROUP_A_WIN_PERCENT,
-  GROUP_B_BLOCK_SIZE,
-  GROUP_B_BLOCK_COUNT,
-  GROUP_B_CONFIRMATION_WINDOW,
-  GROUP_B_REQUIRED_BLOCKS,
-  GROUP_B_SIGNAL_WINDOW,
-  GROUP_B_WIN_PERCENT,
 } from '@/lib/user-trading-strategy';
 import { TRADING_DEFAULTS } from '@/lib/trading-defaults';
 import type {
@@ -307,38 +294,6 @@ export function QuickBotBuilder({
         ? 'B'
         : null;
   const isOneTickStrategy = builderGroup === 'A' || builderGroup === 'C';
-  const groupStrategySummary = builderGroup === 'A'
-    ? localize(
-        'Group A also requires {{percent}}% winning digits in the last {{window}} and {{confirmation}} ticks; Differs uses the same frequent digit above {{baseline}}% in both windows.',
-        {
-          percent: GROUP_A_WIN_PERCENT,
-          window: GROUP_A_SIGNAL_WINDOW,
-          confirmation: GROUP_A_CONFIRMATION_WINDOW,
-          baseline: GROUP_A_DIFFERS_BASELINE_PERCENT,
-        }
-      )
-    : builderGroup === 'B'
-      ? localize(
-          'Group B also requires {{percent}}% wins overall and in the last {{confirmation}} ticks; {{blocks}} of {{blockCount}} {{blockSize}}-tick blocks must each reach {{percent}}%.',
-          {
-            percent: GROUP_B_WIN_PERCENT,
-            window: GROUP_B_SIGNAL_WINDOW,
-            confirmation: GROUP_B_CONFIRMATION_WINDOW,
-            blocks: GROUP_B_REQUIRED_BLOCKS,
-            blockCount: GROUP_B_BLOCK_COUNT,
-            blockSize: GROUP_B_BLOCK_SIZE,
-          }
-        )
-      : builderGroup === 'C'
-        ? localize(
-            'Group C also requires {{percent}}% of one parity in the last {{window}} digits, confirmed by the same parity in the last {{confirmation}}.',
-            {
-              percent: EVEN_ODD_SIGNAL_PERCENT,
-              window: EVEN_ODD_SIGNAL_WINDOW,
-              confirmation: EVEN_ODD_CONFIRMATION_WINDOW,
-            }
-          )
-        : '';
   const compilation = useMemo(
     () => compileUserTradingStrategy(description),
     [description]
@@ -574,12 +529,6 @@ export function QuickBotBuilder({
                 {localize('AUTO PICK')}
               </span>
             </div>
-            {groupStrategySummary && (
-              <p className="text-[10px] leading-relaxed text-muted-foreground">
-                {groupStrategySummary}
-              </p>
-            )}
-
             {conditions.map((condition, index) => (
               <article key={condition.id} className="space-y-3 rounded-lg border border-border/80 bg-card/70 p-3 sm:p-4">
                 <div className="flex items-center justify-between gap-2">

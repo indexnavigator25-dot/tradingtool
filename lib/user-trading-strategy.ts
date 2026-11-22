@@ -4,20 +4,6 @@ import { MARKET_SCAN_TICK_COUNT } from '@/lib/market-scanner';
 import type { MarketScanCandidate } from '@/lib/market-scanner';
 import type { ContractMode } from '@/lib/types';
 
-export const EVEN_ODD_SIGNAL_WINDOW = 20;
-export const EVEN_ODD_CONFIRMATION_WINDOW = 10;
-export const EVEN_ODD_SIGNAL_PERCENT = 65;
-export const GROUP_A_SIGNAL_WINDOW = 100;
-export const GROUP_A_CONFIRMATION_WINDOW = 20;
-export const GROUP_A_WIN_PERCENT = 90;
-export const GROUP_A_DIFFERS_BASELINE_PERCENT = 10;
-export const GROUP_B_SIGNAL_WINDOW = 100;
-export const GROUP_B_BLOCK_SIZE = 20;
-export const GROUP_B_BLOCK_COUNT = 5;
-export const GROUP_B_REQUIRED_BLOCKS = 4;
-export const GROUP_B_CONFIRMATION_WINDOW = 10;
-export const GROUP_B_WIN_PERCENT = 80;
-
 type DigitTrigger =
   | { kind: 'digit'; digit: number; description: string }
   | { kind: 'sequence'; digits: number[]; description: string }
@@ -377,191 +363,6 @@ function triggerMatches(
   }
 }
 
-function matchesParityThreshold(digits: number[], parity: 'even' | 'odd'): boolean {
-  const matchingDigits = digits.filter(
-    (digit) => digit % 2 === (parity === 'even' ? 0 : 1)
-  ).length;
-  return matchingDigits * 100 >= digits.length * EVEN_ODD_SIGNAL_PERCENT;
-}
-
-function matchesEvenOddSignal(
-  digits: number[],
-  endIndex: number,
-  parity: 'even' | 'odd'
-): boolean {
-  const signalWindow = digits.slice(endIndex - EVEN_ODD_SIGNAL_WINDOW, endIndex);
-  const confirmationWindow = digits.slice(
-    endIndex - EVEN_ODD_CONFIRMATION_WINDOW,
-    endIndex
-  );
-  return signalWindow.length === EVEN_ODD_SIGNAL_WINDOW &&
-    confirmationWindow.length === EVEN_ODD_CONFIRMATION_WINDOW &&
-    matchesParityThreshold(signalWindow, parity) &&
-    matchesParityThreshold(confirmationWindow, parity);
-}
-
-function countWinningDigits(
-  digits: number[],
-  contractOption: StrategyContractOption
-): number {
-  return digits.filter((digit) =>
-    isWinningDigit(digit, contractOption.contractMode, contractOption.barrier)
-  ).length;
-}
-
-function meetsWinFrequency(
-  digits: number[],
-  contractOption: StrategyContractOption,
-  percent: number
-): boolean {
-  return digits.length > 0 &&
-    countWinningDigits(digits, contractOption) * 100 >= digits.length * percent;
-}
-
-function getMostFrequentDigit(digits: number[]): number | null {
-  if (digits.length === 0) return null;
-  const counts = Array.from({ length: 10 }, () => 0);
-  digits.forEach((digit) => {
-    counts[digit] = (counts[digit] ?? 0) + 1;
-  });
-  return counts.reduce(
-    (mostFrequent, count, digit) =>
-      count > (counts[mostFrequent] ?? 0) ? digit : mostFrequent,
-    0
-  );
-}
-
-function matchesGroupASignal(
-  digits: number[],
-  endIndex: number,
-  contractOption: StrategyContractOption
-): boolean {
-  const history = digits.slice(endIndex - GROUP_A_SIGNAL_WINDOW, endIndex);
-  const confirmation = digits.slice(
-    endIndex - GROUP_A_CONFIRMATION_WINDOW,
-    endIndex
-  );
-  if (
-    history.length !== GROUP_A_SIGNAL_WINDOW ||
-    confirmation.length !== GROUP_A_CONFIRMATION_WINDOW
-  ) {
-    return false;
-  }
-
-  if (contractOption.contractMode === 'DIGITDIFF') {
-    const barrier = contractOption.barrier;
-    if (barrier === null) return false;
-    const historyMode = getMostFrequentDigit(history);
-    const confirmationMode = getMostFrequentDigit(confirmation);
-    const historyCount = history.filter((digit) => digit === barrier).length;
-    const confirmationCount = confirmation.filter((digit) => digit === barrier).length;
-    return historyMode === barrier &&
-      confirmationMode === barrier &&
-      historyCount * 100 > history.length * GROUP_A_DIFFERS_BASELINE_PERCENT &&
-      confirmationCount * 100 >
-        confirmation.length * GROUP_A_DIFFERS_BASELINE_PERCENT;
-  }
-
-  return meetsWinFrequency(history, contractOption, GROUP_A_WIN_PERCENT) &&
-    meetsWinFrequency(confirmation, contractOption, GROUP_A_WIN_PERCENT);
-}
-
-function matchesGroupBSignal(
-  digits: number[],
-  endIndex: number,
-  contractOption: StrategyContractOption
-): boolean {
-  const history = digits.slice(endIndex - GROUP_B_SIGNAL_WINDOW, endIndex);
-  const confirmation = digits.slice(
-    endIndex - GROUP_B_CONFIRMATION_WINDOW,
-    endIndex
-  );
-  if (
-    history.length !== GROUP_B_SIGNAL_WINDOW ||
-    confirmation.length !== GROUP_B_CONFIRMATION_WINDOW
-  ) {
-    return false;
-  }
-
-  let consistentBlocks = 0;
-  for (let blockIndex = 0; blockIndex < GROUP_B_BLOCK_COUNT; blockIndex += 1) {
-    const blockStart = blockIndex * GROUP_B_BLOCK_SIZE;
-    const block = history.slice(blockStart, blockStart + GROUP_B_BLOCK_SIZE);
-    if (meetsWinFrequency(block, contractOption, GROUP_B_WIN_PERCENT)) {
-      consistentBlocks += 1;
-    }
-  }
-
-  return consistentBlocks >= GROUP_B_REQUIRED_BLOCKS &&
-    meetsWinFrequency(history, contractOption, GROUP_B_WIN_PERCENT) &&
-    meetsWinFrequency(confirmation, contractOption, GROUP_B_WIN_PERCENT);
-}
-
-interface GroupSignalRule {
-  minimumWindow: number;
-  description: string;
-  matchesAt: (digits: number[], endIndex: number) => boolean;
-}
-
-function getGroupSignalRule(
-  contractOption: StrategyContractOption
-): GroupSignalRule | null {
-  if (
-    contractOption.contractMode === 'DIGITEVEN' ||
-    contractOption.contractMode === 'DIGITODD'
-  ) {
-    const parity = contractOption.contractMode === 'DIGITEVEN' ? 'even' : 'odd';
-    return {
-      minimumWindow: EVEN_ODD_SIGNAL_WINDOW,
-      description:
-        `At least ${EVEN_ODD_SIGNAL_PERCENT}% ${parity} in the last ` +
-        `${EVEN_ODD_SIGNAL_WINDOW} digits, confirmed by the last ` +
-        `${EVEN_ODD_CONFIRMATION_WINDOW}`,
-      matchesAt: (digits, endIndex) =>
-        matchesEvenOddSignal(digits, endIndex, parity),
-    };
-  }
-
-  if (
-    contractOption.contractMode === 'DIGITDIFF' ||
-    (contractOption.contractMode === 'DIGITOVER' && contractOption.barrier === 0) ||
-    (contractOption.contractMode === 'DIGITUNDER' && contractOption.barrier === 9)
-  ) {
-    const description = contractOption.contractMode === 'DIGITDIFF'
-      ? `Differs from ${contractOption.barrier}: most frequent digit exceeds ` +
-        `the ${GROUP_A_DIFFERS_BASELINE_PERCENT}% baseline and agrees in the last ` +
-        `${GROUP_A_SIGNAL_WINDOW} and ` +
-        `${GROUP_A_CONFIRMATION_WINDOW}`
-      : `${contractOption.contractDescription}: at least ${GROUP_A_WIN_PERCENT}% ` +
-        `winning digits in the last ${GROUP_A_SIGNAL_WINDOW} and ` +
-        `${GROUP_A_CONFIRMATION_WINDOW}`;
-    return {
-      minimumWindow: GROUP_A_SIGNAL_WINDOW,
-      description,
-      matchesAt: (digits, endIndex) =>
-        matchesGroupASignal(digits, endIndex, contractOption),
-    };
-  }
-
-  if (
-    (contractOption.contractMode === 'DIGITOVER' && contractOption.barrier === 1) ||
-    (contractOption.contractMode === 'DIGITUNDER' && contractOption.barrier === 8)
-  ) {
-    return {
-      minimumWindow: GROUP_B_SIGNAL_WINDOW,
-      description:
-        `${contractOption.contractDescription}: at least ${GROUP_B_REQUIRED_BLOCKS} of ${GROUP_B_BLOCK_COUNT} ` +
-        `${GROUP_B_BLOCK_SIZE}-tick blocks, ${GROUP_B_WIN_PERCENT}% wins overall, ` +
-        `and ${GROUP_B_WIN_PERCENT}% confirmation in the last ` +
-        `${GROUP_B_CONFIRMATION_WINDOW}`,
-      matchesAt: (digits, endIndex) =>
-        matchesGroupBSignal(digits, endIndex, contractOption),
-    };
-  }
-
-  return null;
-}
-
 function isWinningDigit(
   digit: number,
   contractMode: StrategyContractOption['contractMode'],
@@ -635,23 +436,12 @@ export function evaluateUserTradingStrategy(
   };
 
   for (const contractOption of strategy.contractOptions) {
-    const groupSignalRule = getGroupSignalRule(contractOption);
-    const groupSignalMatches = groupSignalRule
-      ? Array.from({ length: digits.length + 1 }, (_, endIndex) =>
-          endIndex >= groupSignalRule.minimumWindow &&
-          groupSignalRule.matchesAt(digits, endIndex)
-        )
-      : null;
     for (const trigger of strategy.triggers) {
       const triggerLength = getTriggerLength(trigger);
-      const minimumWindow = Math.max(
-        triggerLength,
-        groupSignalRule?.minimumWindow ?? 0
-      );
+      const minimumWindow = triggerLength;
       if (digits.length < minimumWindow) continue;
 
       const matchesAt = (endIndex: number) =>
-        (groupSignalMatches?.[endIndex] ?? true) &&
         triggerMatches(
           digits.slice(endIndex - triggerLength, endIndex),
           trigger,
@@ -669,9 +459,7 @@ export function evaluateUserTradingStrategy(
 
       addCandidate(
         contractOption,
-        groupSignalRule
-          ? `${groupSignalRule.description} · ${trigger.description}`
-          : trigger.description,
+        trigger.description,
         ruleMatched,
         signalOutcomes
       );
