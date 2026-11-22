@@ -31,6 +31,8 @@ import { MarketScannerNotification } from '@/components/custom/market-scanner-no
 import { getSymbolDisplayName } from '@/lib/active-symbols-display-names';
 import { formatUserTradingStrategyDescription } from '@/lib/user-trading-strategy';
 import {
+  formatAmount,
+  formatBarrier,
   formatDate,
   formatInteger,
   formatPercent,
@@ -521,6 +523,9 @@ export function HomeDashboard({
                     <div className="min-w-0">
                       <p className="truncate text-xs font-semibold text-foreground">
                         {contractTypeLabels[trade.contractType] ?? trade.contractType}
+                        {trade.barrier !== null
+                          ? ` · ${localize('Barrier')} ${formatBarrier(trade.barrier, locale)}`
+                          : ''}
                         {' · '}
                         {getSymbolDisplayName(trade.symbol)}
                       </p>
@@ -530,6 +535,8 @@ export function HomeDashboard({
                         {formatTradeTime(trade.timestamp, locale)}
                         {' · '}
                         {localize('Last digit')} {trade.lastDigit ?? '—'}
+                        {' · '}
+                        {localize('Stake')}: {formatAmount(trade.stake, locale)} {trade.currency}
                       </p>
                     </div>
                   </div>

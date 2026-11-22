@@ -21,7 +21,7 @@ import { useBaseTrading } from '@/hooks/use-base-trading';
 import type { UseBaseTradingParams } from '@/hooks/use-base-trading';
 import { computeDigitStats, getLastDigit, pipSizeFromPip } from '../lib/digit-stats';
 import {
-  chooseBestHistoricalScanCandidate,
+  chooseNextHistoricalScanCandidate,
   getContractBarrier,
   getScannableMarkets,
   MARKET_SCAN_TIMEOUT_MS,
@@ -1143,6 +1143,10 @@ export function useDigitsTrading({
       });
     }
     let scanNumber = 0;
+    const contractModeOrder = Array.from(new Set(
+      strategy.contractOptions.map((option) => option.contractMode)
+    ));
+    let nextContractModeIndex = 0;
     let minuteWindowIndex = 0;
     const tradesByMinute = new Map<number, number>();
 
@@ -1292,9 +1296,17 @@ export function useDigitsTrading({
         const candidatePool = candidatesToEvaluate.length > 0
           ? candidatesToEvaluate
           : scanResult.candidates;
-        const candidate = chooseBestHistoricalScanCandidate(candidatePool);
+        const candidate = chooseNextHistoricalScanCandidate(
+          candidatePool,
+          contractModeOrder,
+          nextContractModeIndex
+        );
         if (!candidate) {
           throw new Error(localize('No market digit history was available to select a market.'));
+        }
+        const selectedModeIndex = contractModeOrder.indexOf(candidate.contractMode);
+        if (selectedModeIndex >= 0) {
+          nextContractModeIndex = (selectedModeIndex + 1) % contractModeOrder.length;
         }
         setAutoTradingScanProgress((progress) =>
           progress?.phase === 'evaluating'

@@ -13,7 +13,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { getSymbolDisplayName } from '@/lib/active-symbols-display-names';
-import { formatAmount, formatSignedAmount } from '@/lib/locale-format';
+import { formatAmount, formatBarrier, formatSignedAmount } from '@/lib/locale-format';
 import { useAppTranslations } from '@/components/custom/i18n-provider';
 import type { SessionTransaction } from '@/hooks/use-session-transactions';
 
@@ -156,7 +156,12 @@ export function TransactionsPanel({
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
                     <p className="truncate text-xs font-semibold text-foreground">
-                      {typeLabel} · {getSymbolDisplayName(transaction.symbol)}
+                      {typeLabel}
+                      {transaction.barrier !== null
+                        ? ` · ${localize('Barrier')} ${formatBarrier(transaction.barrier, locale)}`
+                        : ''}
+                      {' · '}
+                      {getSymbolDisplayName(transaction.symbol)}
                     </p>
                     <p className="mt-0.5 text-[10px] text-muted-foreground">
                       #{transaction.contractId} · {formatTransactionTime(transaction.timestamp, locale)}

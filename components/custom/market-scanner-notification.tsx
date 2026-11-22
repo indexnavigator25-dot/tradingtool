@@ -178,7 +178,7 @@ export function MarketScannerNotification({
               {localize('Bot rule: {{rule}}', { rule: progress.ruleDescription })}
             </p>
             <p className="mt-1 text-[11px] text-muted-foreground">
-              {localize('Each scan uses rolling 1,000-tick histories and selects one market and contract direction within 15 seconds.')}
+              {localize('Each scan uses rolling 1,000-tick histories, rotates contract types, and selects the best market for that type within 15 seconds.')}
             </p>
             {progress.scanOnly && (
               <p className="mt-1 text-[11px] font-semibold text-primary">

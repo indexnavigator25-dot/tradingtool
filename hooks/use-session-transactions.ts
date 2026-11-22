@@ -9,6 +9,7 @@ import { openPositionProfit } from '@/lib/position-amounts';
 export interface SessionTransaction {
   contractId: number;
   contractType: string;
+  barrier: string | null;
   symbol: string;
   stake: number | string;
   value: number | string;
@@ -93,6 +94,7 @@ export function useSessionTransactions(
         byId.set(position.contract_id, {
           contractId: position.contract_id,
           contractType: position.contract_type,
+          barrier: position.barrier ?? null,
           symbol: position.underlying_symbol,
           stake: position.buy_price,
           value: position.bid_price,

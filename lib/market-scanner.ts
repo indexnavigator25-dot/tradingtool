@@ -240,6 +240,31 @@ export function chooseBestHistoricalScanCandidate(
   return rankHistoricalScanCandidates(candidates)[0] ?? null;
 }
 
+export function chooseNextHistoricalScanCandidate(
+  candidates: MarketScanCandidate[],
+  contractModeOrder: readonly MarketScanCandidate['contractMode'][],
+  startIndex: number
+): MarketScanCandidate | null {
+  const rankedCandidates = rankHistoricalScanCandidates(candidates);
+  if (rankedCandidates.length === 0) return null;
+
+  const uniqueContractModes = Array.from(new Set(contractModeOrder));
+  if (uniqueContractModes.length === 0) return rankedCandidates[0] ?? null;
+
+  const firstIndex =
+    ((Math.trunc(startIndex) % uniqueContractModes.length) + uniqueContractModes.length) %
+    uniqueContractModes.length;
+
+  for (let offset = 0; offset < uniqueContractModes.length; offset += 1) {
+    const contractMode =
+      uniqueContractModes[(firstIndex + offset) % uniqueContractModes.length];
+    const candidate = rankedCandidates.find((entry) => entry.contractMode === contractMode);
+    if (candidate) return candidate;
+  }
+
+  return rankedCandidates[0] ?? null;
+}
+
 export function getContractBarrier(
   contractMode: ContractMode,
   selectedDigit: number | null
