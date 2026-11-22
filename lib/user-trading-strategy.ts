@@ -37,7 +37,6 @@ export interface StrategyRecoveryState {
 export interface SavedBotSettings {
   marketSymbol?: string | null;
   stake?: string;
-  maximumStake?: string;
   duration?: number;
   recoveryEnabled?: boolean;
   recoveryMultiplier?: string;

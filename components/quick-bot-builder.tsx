@@ -185,7 +185,6 @@ export function QuickBotBuilder({
   const [barrier, setBarrier] = useState('1');
   const [contractOptions, setContractOptions] = useState<StrategyContractOption[] | null>(null);
   const [durationDraft, setDurationDraft] = useState(String(duration));
-  const [maximumStake, setMaximumStake] = useState('10');
   const [recoveryEnabled, setRecoveryEnabled] = useState(false);
   const [previewLoaded, setPreviewLoaded] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -251,7 +250,6 @@ export function QuickBotBuilder({
     setContractOptions(
       result.strategy.contractOptions.length > 1 ? result.strategy.contractOptions : null
     );
-    setMaximumStake(previewBot.maximumStake ?? '10');
     setRecoveryEnabled(previewBot.recoveryEnabled ?? false);
     onStakeChange(previewBot.stake ?? TRADING_DEFAULTS.stake);
     onDurationChange(previewBot.duration ?? TRADING_DEFAULTS.duration);
@@ -312,7 +310,6 @@ export function QuickBotBuilder({
     setContractMode('DIGITOVER');
     setBarrier('1');
     setContractOptions(null);
-    setMaximumStake('10');
     setRecoveryEnabled(false);
     setDurationDraft(String(TRADING_DEFAULTS.duration));
     onStakeChange(TRADING_DEFAULTS.stake);
@@ -341,10 +338,8 @@ export function QuickBotBuilder({
       return null;
     }
     const initialStake = Number(stake);
-    const stakeLimit = Number(maximumStake);
-    if (!Number.isFinite(initialStake) || initialStake <= 0 ||
-      !Number.isFinite(stakeLimit) || stakeLimit < initialStake) {
-      setSaveError(localize('Maximum stake must be at least the initial stake.'));
+    if (!Number.isFinite(initialStake) || initialStake <= 0) {
+      setSaveError(localize('Stake must be greater than zero.'));
       setSavedNotice(null);
       return null;
     }
@@ -371,7 +366,6 @@ export function QuickBotBuilder({
     setSavedNotice(null);
     return {
       stake,
-      maximumStake,
       duration: parsedDuration,
       recoveryEnabled,
       recoveryMultiplier: martingaleMultiplier,
@@ -801,22 +795,6 @@ export function QuickBotBuilder({
                 <dd className="font-medium capitalize text-foreground">{martingaleMode}</dd>
               </div>
             </dl>
-            <div className="space-y-1.5">
-              <Label htmlFor="quick-bot-maximum-stake">{localize('Maximum stake')}</Label>
-              <Input
-                id="quick-bot-maximum-stake"
-                type="number"
-                min={stake || '0.35'}
-                step="0.01"
-                value={maximumStake}
-                onChange={(event) => {
-                  setMaximumStake(event.target.value);
-                  setSaveError(null);
-                  setSavedNotice(null);
-                }}
-                disabled={disabled}
-              />
-            </div>
           </section>
 
           <section className="space-y-3 rounded-lg border border-border/80 bg-card/70 p-3 sm:p-4">
@@ -835,10 +813,7 @@ export function QuickBotBuilder({
                 className="mt-0.5 h-4 w-4 accent-primary"
               />
               <span>
-                <span className="font-medium">{localize('Use recovery multiplier')}</span>
-                <span className="mt-1 block text-[10px] leading-relaxed text-muted-foreground">
-                  {localize('Applied after a loss; can increase losses.')}
-                </span>
+                <span className="font-medium">{localize('Enable recovery')}</span>
               </span>
             </label>
             <div className="space-y-1.5">
@@ -854,7 +829,7 @@ export function QuickBotBuilder({
                   setSaveError(null);
                   setSavedNotice(null);
                 }}
-                disabled={disabled}
+                disabled={disabled || !recoveryEnabled}
               />
             </div>
           </section>

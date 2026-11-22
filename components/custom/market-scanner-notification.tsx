@@ -78,13 +78,17 @@ export function MarketScannerNotification({
     >
         <div className="flex items-start justify-between gap-3">
           <div className="flex min-w-0 items-center gap-3">
-            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-primary/35 bg-primary/10 text-primary">
-              {isSelected || isPreview ? (
+            {isSelected || isPreview ? (
+              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full border border-emerald-400/40 bg-emerald-400/10 text-emerald-400">
                 <CheckCircle2 className="h-6 w-6" />
-              ) : (
-                <Radar className="market-scan-spinner h-6 w-6" />
-              )}
-            </div>
+              </div>
+            ) : (
+              <div className="market-scanner-radar relative grid h-12 w-12 shrink-0 place-items-center rounded-full border border-primary/40 text-primary">
+                <span className="market-scanner-radar-grid" aria-hidden="true" />
+                <span className="market-scanner-radar-dot" aria-hidden="true" />
+                <Radar className="relative z-10 h-5 w-5" />
+              </div>
+            )}
             <div className="min-w-0">
               <p className="truncate text-sm font-extrabold tracking-wide">
                 {localize('Strategy Bot')}
@@ -116,20 +120,25 @@ export function MarketScannerNotification({
             aria-label={localize('{{percent}} percent of market histories resolved', {
               percent: Math.round(progressPercent),
             })}
-            className="flex h-[4.25rem] w-[4.25rem] shrink-0 flex-col items-center justify-center rounded-full border-2 border-primary/45 bg-primary/5 shadow-[0_0_20px_rgb(var(--primary)/0.16)]"
+            className="market-scanner-progress-ring h-[4.25rem] w-[4.25rem] shrink-0 rounded-full p-[3px] shadow-[0_0_20px_rgb(var(--primary)/0.2)]"
+            style={{
+              backgroundImage: `conic-gradient(from -90deg, rgb(var(--primary)) ${progressPercent}%, rgb(var(--primary) / 0.14) ${progressPercent}% 100%)`,
+            }}
           >
-            {isSelected ? (
-              <CheckCircle2 className="h-7 w-7 text-primary" />
-            ) : (
-              <span className="font-mono text-3xl font-black tabular-nums text-primary">
-                {String(Math.round(progressPercent)).padStart(2, '0')}
-              </span>
-            )}
-            {!isSelected && (
-              <span className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground">
-                {localize('Live')}
-              </span>
-            )}
+            <div className="flex h-full w-full flex-col items-center justify-center rounded-full bg-background">
+              {isSelected ? (
+                <CheckCircle2 className="h-7 w-7 text-primary" />
+              ) : (
+                <span className="font-mono text-3xl font-black tabular-nums text-primary">
+                  {String(Math.round(progressPercent)).padStart(2, '0')}
+                </span>
+              )}
+              {!isSelected && (
+                <span className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground">
+                  {localize('Live')}
+                </span>
+              )}
+            </div>
           </div>
           <div className="grid min-w-0 grid-cols-3 gap-1.5">
             {[
@@ -153,10 +162,11 @@ export function MarketScannerNotification({
                   ? Math.min(100, (prediction.triggerMatches / prediction.sampleCount) * 100)
                   : 0,
               },
-            ].map((metric) => (
+            ].map((metric, index) => (
               <div
                 key={metric.label}
-                className="min-w-0 rounded-lg border border-border/70 bg-background/70 p-2"
+                className="market-scanner-metric min-w-0 rounded-lg border border-primary/20 bg-background/70 p-2"
+                style={{ animationDelay: `${index * 180}ms` }}
               >
                 <p className="truncate text-[9px] font-bold uppercase tracking-wider text-muted-foreground">
                   {metric.label}
@@ -169,7 +179,7 @@ export function MarketScannerNotification({
                 </p>
                 <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-muted">
                   <div
-                    className="h-full rounded-full bg-primary transition-[width] duration-500 ease-out"
+                    className="market-scanner-meter-fill h-full rounded-full bg-primary transition-[width] duration-500 ease-out"
                     style={{ width: `${metric.percent}%` }}
                   />
                 </div>
@@ -269,7 +279,7 @@ export function MarketScannerNotification({
                   </div>
                   <div className="mt-1 h-1 overflow-hidden rounded-full bg-muted">
                     <div
-                      className="h-full rounded-full bg-primary transition-[width] duration-500 ease-out"
+                      className="market-scanner-meter-fill h-full rounded-full bg-primary transition-[width] duration-500 ease-out"
                       style={{ width: `${Math.min(100, Math.max(0, value * 100))}%` }}
                     />
                   </div>
@@ -285,14 +295,14 @@ export function MarketScannerNotification({
           <div
             role="status"
             aria-label={statusText}
-            className="mt-3 flex h-12 items-end gap-1 rounded-xl border border-border bg-muted/30 px-3 py-2"
+            className={`market-scanner-waveform mt-3 flex h-12 items-end gap-1 rounded-xl border border-primary/20 bg-muted/30 px-3 py-2 ${
+              isLiveScanning ? 'is-active' : ''
+            }`}
           >
             {[25, 55, 35, 75, 45, 90, 50, 70, 30, 60, 40, 80].map((height, index) => (
               <span
                 key={index}
-                className={`flex-1 rounded-t-sm bg-primary/70 transition-all duration-300 ${
-                  isLiveScanning ? 'motion-safe:animate-pulse' : 'opacity-40'
-                }`}
+                className="market-scanner-waveform-bar flex-1 rounded-t-sm bg-primary/70"
                 style={{ height: `${height}%`, animationDelay: `${index * 45}ms` }}
               />
             ))}

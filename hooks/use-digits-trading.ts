@@ -1046,11 +1046,9 @@ export function useDigitsTrading({
     const parsedRunDurationHours = Number(runDurationHours);
     const scanOnly = !isAuthenticated;
     const baseStake = Number(settings.stake ?? stake);
-    const maximumStake = settings.maximumStake === undefined
-      ? null
-      : Number(settings.maximumStake);
     const tradeDuration = settings.duration ?? duration;
-    const multiplier = settings.recoveryEnabled === false
+    const recoveryEnabled = settings.recoveryEnabled === true;
+    const multiplier = !recoveryEnabled
       ? 1
       : Number(settings.recoveryMultiplier ?? martingaleValues[martingaleMode]);
     try {
@@ -1061,12 +1059,6 @@ export function useDigitsTrading({
       }
       if (!Number.isFinite(baseStake) || baseStake <= 0) {
         throw new Error(localize('Stake must be greater than zero.'));
-      }
-      if (maximumStake !== null && (
-        !Number.isFinite(maximumStake) ||
-        maximumStake < baseStake
-      )) {
-        throw new Error(localize('Maximum stake must be at least the initial stake.'));
       }
       if (!Number.isInteger(tradeDuration) || tradeDuration < 1 || tradeDuration > 200) {
         throw new Error(localize('Duration must be between 1 and 200 ticks.'));
@@ -1158,7 +1150,7 @@ export function useDigitsTrading({
       });
     }
     const baseGroup = getStrategyGroup(strategy);
-    let recoveryState: StrategyRecoveryState | null = baseGroup
+    let recoveryState: StrategyRecoveryState | null = baseGroup && recoveryEnabled
       ? createStrategyRecoveryState(baseGroup)
       : null;
     let scanNumber = 0;
@@ -1651,9 +1643,6 @@ export function useDigitsTrading({
           settledProfit,
           martingaleProgress
         );
-        if (maximumStake !== null && next.stake > maximumStake) {
-          break;
-        }
         nextStake = next.stake;
         if (!Number.isFinite(nextStake) || nextStake <= 0) {
           throw new Error(localize('Martingale stake exceeded the supported numeric range. Auto-trading was stopped.'));

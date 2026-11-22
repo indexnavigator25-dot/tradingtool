@@ -20,7 +20,6 @@ export interface SavedBot {
   createdAt: number;
   marketSymbol?: string | null;
   stake?: string;
-  maximumStake?: string;
   duration?: number;
   recoveryEnabled?: boolean;
   recoveryMultiplier?: string;
@@ -56,10 +55,6 @@ function isSavedBot(value: unknown): value is SavedBot {
       typeof value.marketSymbol === 'string') &&
     (!('stake' in value) ||
       (typeof value.stake === 'string' && Number.isFinite(Number(value.stake)) && Number(value.stake) > 0)) &&
-    (!('maximumStake' in value) ||
-      (typeof value.maximumStake === 'string' &&
-        Number.isFinite(Number(value.maximumStake)) &&
-        Number(value.maximumStake) > 0)) &&
     (!('duration' in value) ||
       (typeof value.duration === 'number' && Number.isInteger(value.duration) && value.duration > 0)) &&
     (!('recoveryEnabled' in value) || typeof value.recoveryEnabled === 'boolean') &&
@@ -415,19 +410,18 @@ export function SavedBotsPanel({
                   <p className="mt-1 break-words text-xs text-muted-foreground">
                     {formatUserTradingStrategyDescription(bot.description)}
                   </p>
-                  {(bot.stake || bot.maximumStake || bot.duration || bot.takeProfit || bot.stopLoss) && (
+                  {(bot.stake || bot.duration || bot.takeProfit || bot.stopLoss) && (
                     <p className="mt-1 text-[10px] text-muted-foreground">
-                      {localize('Markets: all open continuous indices · Stake: {{stake}} USD · Max: {{maximumStake}} USD · Duration: {{duration}} ticks', {
+                      {localize('Markets: all open continuous indices · Stake: {{stake}} USD · Duration: {{duration}} ticks', {
                         stake: bot.stake ?? TRADING_DEFAULTS.stake,
-                        maximumStake: bot.maximumStake ?? localize('No limit'),
                         duration: bot.duration ?? 2,
                       })}
                       {bot.takeProfit && ` · ${localize('TP: {{value}} USD', { value: bot.takeProfit })}`}
                       {bot.stopLoss && ` · ${localize('SL: {{value}} USD', { value: bot.stopLoss })}`}
-                      {bot.recoveryEnabled !== false && ` · ${localize('Recovery: {{value}}×', {
+                      {bot.recoveryEnabled === true && ` · ${localize('Recovery: {{value}}×', {
                         value: bot.recoveryMultiplier ?? TRADING_DEFAULTS.recoveryMultiplier,
                       })}`}
-                      {bot.recoveryEnabled === false && ` · ${localize('Recovery off')}`}
+                      {bot.recoveryEnabled !== true && ` · ${localize('Recovery off')}`}
                     </p>
                   )}
                   <p className="mt-1 text-[10px] text-muted-foreground">
