@@ -33,6 +33,19 @@ import {
 import type { MarketScanCandidate } from '../lib/market-scanner';
 import type { ScoredMarketScanCandidate } from '../lib/market-scanner';
 import {
+  EVEN_ODD_CONFIRMATION_WINDOW,
+  EVEN_ODD_SIGNAL_PERCENT,
+  EVEN_ODD_SIGNAL_WINDOW,
+  GROUP_A_CONFIRMATION_WINDOW,
+  GROUP_A_DIFFERS_BASELINE_PERCENT,
+  GROUP_A_SIGNAL_WINDOW,
+  GROUP_A_WIN_PERCENT,
+  GROUP_B_BLOCK_SIZE,
+  GROUP_B_BLOCK_COUNT,
+  GROUP_B_CONFIRMATION_WINDOW,
+  GROUP_B_REQUIRED_BLOCKS,
+  GROUP_B_SIGNAL_WINDOW,
+  GROUP_B_WIN_PERCENT,
   advanceStrategyRecoveryState,
   createStrategyForGroup,
   createStrategyRecoveryState,
@@ -1230,17 +1243,24 @@ export function useDigitsTrading({
           return null;
         }
         scanNumber += 1;
-        const activeGroup = recoveryState?.activeGroup ?? null;
+        const activeGroup = recoveryState?.activeGroup ?? baseGroup;
         const activeStrategy = activeGroup
           ? createStrategyForGroup(strategy, activeGroup)
           : strategy;
-        const ruleDescription = activeGroup !== null &&
-          activeGroup !== recoveryState?.baseGroup
-          ? [
-              activeStrategy.contractDescription,
-              strategy.triggers.map((trigger) => trigger.description).join(' or '),
-            ].filter(Boolean).join(' · ')
-          : strategy.description;
+        const ruleDescription = activeGroup === 'A'
+          ? `Group A: ${GROUP_A_WIN_PERCENT}% winning digits across the last ` +
+            `${GROUP_A_SIGNAL_WINDOW} and ${GROUP_A_CONFIRMATION_WINDOW}; ` +
+            `Differs uses a digit above the ${GROUP_A_DIFFERS_BASELINE_PERCENT}% baseline confirmed in both windows`
+          : activeGroup === 'B'
+            ? `Group B: ${GROUP_B_REQUIRED_BLOCKS} of ${GROUP_B_BLOCK_COUNT} ${GROUP_B_BLOCK_SIZE}-tick ` +
+              `blocks must each reach ${GROUP_B_WIN_PERCENT}%; the last ` +
+              `${GROUP_B_SIGNAL_WINDOW} and ${GROUP_B_CONFIRMATION_WINDOW} must also ` +
+              `reach ${GROUP_B_WIN_PERCENT}%`
+            : activeGroup === 'C'
+              ? `Group C: ${EVEN_ODD_SIGNAL_PERCENT}% parity in the last ` +
+                `${EVEN_ODD_SIGNAL_WINDOW} digits, confirmed in the last ` +
+                `${EVEN_ODD_CONFIRMATION_WINDOW} by the same direction`
+              : strategy.description;
 
         const eligibleMarkets = getScannableMarkets(symbols);
         if (eligibleMarkets.length === 0) {
@@ -1471,6 +1491,13 @@ export function useDigitsTrading({
         if (!connected) break;
 
         const barrier = candidate.barrier ?? undefined;
+        const candidateDuration = candidate.contractMode === 'DIGITDIFF' ||
+          candidate.contractMode === 'DIGITEVEN' ||
+          candidate.contractMode === 'DIGITODD' ||
+          (candidate.contractMode === 'DIGITOVER' && candidate.barrier === 0) ||
+          (candidate.contractMode === 'DIGITUNDER' && candidate.barrier === 9)
+          ? 1
+          : tradeDuration;
         const proposalParams = {
           proposal: 1,
           amount: nextStake,
@@ -1478,7 +1505,7 @@ export function useDigitsTrading({
           contract_type: candidate.contractMode,
           currency: 'USD',
           underlying_symbol: market.underlying_symbol,
-          duration: tradeDuration,
+          duration: candidateDuration,
           duration_unit: 't',
           ...(barrier !== undefined ? { barrier } : {}),
         };
