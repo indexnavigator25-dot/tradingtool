@@ -26,12 +26,24 @@ import {
   getScannableMarkets,
   MARKET_SCAN_TIMEOUT_MS,
   MARKET_SCAN_TICK_COUNT,
+  isRecoveryCandidateQualified,
   scoreMarketCandidate,
 } from '../lib/market-scanner';
 import type { MarketScanCandidate } from '../lib/market-scanner';
 import type { ScoredMarketScanCandidate } from '../lib/market-scanner';
-import { evaluateUserTradingStrategy } from '../lib/user-trading-strategy';
-import type { SavedBotSettings, UserTradingStrategy } from '../lib/user-trading-strategy';
+import {
+  advanceStrategyRecoveryState,
+  createStrategyForGroup,
+  createStrategyRecoveryState,
+  evaluateUserTradingStrategy,
+  getStrategyGroup,
+} from '../lib/user-trading-strategy';
+import type {
+  SavedBotSettings,
+  StrategyGroup,
+  StrategyRecoveryState,
+  UserTradingStrategy,
+} from '../lib/user-trading-strategy';
 import { getNextMartingaleStake, initialMartingaleProgress } from '../lib/martingale';
 import type { MartingaleMode } from '../lib/martingale';
 import {
@@ -59,6 +71,10 @@ export interface AutoTradingScanProgress {
   eligibleCandidates: number;
   scanNumber: number;
   ruleDescription: string;
+  baseGroup: StrategyGroup | null;
+  activeGroup: StrategyGroup | null;
+  recoveryActive: boolean;
+  recoveryTerminal: boolean;
   selectedMarket: string | null;
   selectedContractMode: Exclude<ContractMode, 'DIGITMATCH'> | null;
   estimatedWinRate: number | null;
@@ -1142,11 +1158,17 @@ export function useDigitsTrading({
         lastUpdatedAt: Date.now(),
       });
     }
+    const baseGroup = getStrategyGroup(strategy);
+    let recoveryState: StrategyRecoveryState | null = baseGroup
+      ? createStrategyRecoveryState(baseGroup)
+      : null;
+    const nextContractModeIndexByGroup: Record<StrategyGroup, number> = {
+      A: 0,
+      B: 0,
+      C: 0,
+    };
+    let nextCustomContractModeIndex = 0;
     let scanNumber = 0;
-    const contractModeOrder = Array.from(new Set(
-      strategy.contractOptions.map((option) => option.contractMode)
-    ));
-    let nextContractModeIndex = 0;
     let minuteWindowIndex = 0;
     const tradesByMinute = new Map<number, number>();
 
@@ -1215,7 +1237,25 @@ export function useDigitsTrading({
         if (!connected) {
           return null;
         }
+        const scanStartedAt = Date.now();
         scanNumber += 1;
+        const activeGroup = recoveryState?.activeGroup ?? null;
+        const activeStrategy = activeGroup
+          ? createStrategyForGroup(strategy, activeGroup)
+          : strategy;
+        const contractModeOrder = Array.from(new Set(
+          activeStrategy.contractOptions.map((option) => option.contractMode)
+        ));
+        const ruleDescription = activeGroup !== null &&
+          activeGroup !== recoveryState?.baseGroup
+          ? [
+              activeStrategy.contractDescription,
+              strategy.triggers.map((trigger) => trigger.description).join(' or '),
+            ].filter(Boolean).join(' · ')
+          : strategy.description;
+        const nextContractModeIndex = activeGroup
+          ? nextContractModeIndexByGroup[activeGroup]
+          : nextCustomContractModeIndex;
 
         const eligibleMarkets = getScannableMarkets(symbols);
         if (eligibleMarkets.length === 0) {
@@ -1232,7 +1272,11 @@ export function useDigitsTrading({
           evaluatedCandidates: 0,
           eligibleCandidates: 0,
           scanNumber,
-          ruleDescription: strategy.description,
+          ruleDescription,
+          baseGroup: recoveryState?.baseGroup ?? null,
+          activeGroup,
+          recoveryActive: recoveryState?.recoveryActive ?? false,
+          recoveryTerminal: recoveryState?.terminal ?? false,
           selectedMarket: null,
           selectedContractMode: null,
           estimatedWinRate: null,
@@ -1243,7 +1287,7 @@ export function useDigitsTrading({
         const scanResult = await scanMarkets(
           tradingWs,
           eligibleMarkets,
-          strategy,
+          activeStrategy,
           () => session.stopRequested || Date.now() >= scheduleDeadlineAt,
           subscribeToActiveTicks,
           marketHistoryCache,
@@ -1296,8 +1340,33 @@ export function useDigitsTrading({
         const candidatePool = candidatesToEvaluate.length > 0
           ? candidatesToEvaluate
           : scanResult.candidates;
+        const recoveryActive = recoveryState?.recoveryActive ?? false;
+        const recoveryCandidates = recoveryActive
+          ? candidatePool.filter((candidate) => isRecoveryCandidateQualified(candidate))
+          : candidatePool;
+        setAutoTradingScanProgress((progress) =>
+          progress?.phase === 'evaluating'
+            ? {
+                ...progress,
+                evaluatedCandidates: candidatePool.length,
+                eligibleCandidates: recoveryActive
+                  ? recoveryCandidates.length
+                  : candidatePool.filter((entry) => entry.ruleMatched).length,
+              }
+            : progress
+        );
+        if (recoveryActive && recoveryCandidates.length === 0) {
+          const retryDelay = Math.max(
+            0,
+            MARKET_SCAN_TIMEOUT_MS - (Date.now() - scanStartedAt)
+          );
+          if (retryDelay > 0) {
+            await new Promise((resolve) => setTimeout(resolve, retryDelay));
+          }
+          continue;
+        }
         const candidate = chooseNextHistoricalScanCandidate(
-          candidatePool,
+          recoveryCandidates,
           contractModeOrder,
           nextContractModeIndex
         );
@@ -1305,20 +1374,14 @@ export function useDigitsTrading({
           throw new Error(localize('No market digit history was available to select a market.'));
         }
         const selectedModeIndex = contractModeOrder.indexOf(candidate.contractMode);
-        if (selectedModeIndex >= 0) {
-          nextContractModeIndex = (selectedModeIndex + 1) % contractModeOrder.length;
+        if (selectedModeIndex >= 0 && contractModeOrder.length > 0) {
+          if (activeGroup) {
+            nextContractModeIndexByGroup[activeGroup] =
+              (selectedModeIndex + 1) % contractModeOrder.length;
+          } else {
+            nextCustomContractModeIndex = (selectedModeIndex + 1) % contractModeOrder.length;
+          }
         }
-        setAutoTradingScanProgress((progress) =>
-          progress?.phase === 'evaluating'
-            ? {
-                ...progress,
-                evaluatedCandidates: candidatePool.length,
-                eligibleCandidates: candidatePool.filter(
-                  (entry) => entry.ruleMatched
-                ).length,
-              }
-            : progress
-        );
         return candidate;
       }
       return null;
@@ -1473,6 +1536,16 @@ export function useDigitsTrading({
         if (!Number.isFinite(quote.payout) || quote.payout <= 0) {
           throw new Error(localize('The proposal did not include a valid potential payout.'));
         }
+        if (
+          recoveryState?.recoveryActive &&
+          !isRecoveryCandidateQualified(candidate, {
+            askPrice: quote.ask_price,
+            payout: quote.payout,
+          })
+        ) {
+          skipUnfavorableCandidate(candidate);
+          continue;
+        }
         const refreshedCandidate = scoreMarketCandidate(candidate, {
           askPrice: quote.ask_price,
           payout: quote.payout,
@@ -1561,6 +1634,24 @@ export function useDigitsTrading({
           autoSessionStatsRef.current.profit =
             Math.round((autoSessionStatsRef.current.profit + settledProfit) * 100) / 100;
           setAutoTradingProfit(autoSessionStatsRef.current.profit);
+        }
+        if (recoveryState) {
+          const previousRecoveryState = recoveryState;
+          recoveryState = advanceStrategyRecoveryState(recoveryState, settledProfit);
+          if (recoveryState.terminal && !previousRecoveryState.terminal) {
+            toast.info(localize('Recovery reached Group C and will remain there after a loss.'));
+          } else if (
+            recoveryState.activeGroup === recoveryState.baseGroup &&
+            previousRecoveryState.recoveryActive
+          ) {
+            toast.info(localize('Recovery win: returning to Group {{group}}.', {
+              group: recoveryState.baseGroup,
+            }));
+          } else if (recoveryState.activeGroup !== previousRecoveryState.activeGroup) {
+            toast.info(localize('Recovery loss: switching to Group {{group}} contracts.', {
+              group: recoveryState.activeGroup,
+            }));
+          }
         }
         const sessionProfit = autoSessionStatsRef.current.profit;
 

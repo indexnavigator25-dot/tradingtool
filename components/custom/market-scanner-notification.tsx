@@ -177,8 +177,21 @@ export function MarketScannerNotification({
             <p className="mt-1 break-words text-[11px] leading-relaxed text-muted-foreground">
               {localize('Bot rule: {{rule}}', { rule: progress.ruleDescription })}
             </p>
+            {progress.recoveryActive && !progress.recoveryTerminal && progress.activeGroup && (
+              <p className="mt-1 text-[11px] font-semibold text-amber-600 dark:text-amber-400">
+                {localize('Recovery transition: Group {{group}} after a loss from Group {{baseGroup}} requires a matched entry, 10+ historical signals, at least 10% edge, and positive live expected return.', {
+                  group: progress.activeGroup,
+                  baseGroup: progress.baseGroup,
+                })}
+              </p>
+            )}
+            {progress.recoveryTerminal && (
+              <p className="mt-1 text-[11px] font-semibold text-amber-600 dark:text-amber-400">
+                {localize('Recovery is locked in Group C; it stays there and keeps the high-confidence entry filter.')}
+              </p>
+            )}
             <p className="mt-1 text-[11px] text-muted-foreground">
-              {localize('Each scan uses rolling 1,000-tick histories, rotates contract types, and selects the best market for that type within 15 seconds.')}
+              {localize('Each scan rotates contract types and ranks rolling 1,000-tick histories within 15 seconds; recovery waits for high-confidence setups.')}
             </p>
             {progress.scanOnly && (
               <p className="mt-1 text-[11px] font-semibold text-primary">

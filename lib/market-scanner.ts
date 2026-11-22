@@ -179,6 +179,26 @@ export function scoreMarketCandidate(
   };
 }
 
+export const RECOVERY_MIN_SIGNAL_COUNT = 10;
+export const RECOVERY_MIN_STATISTICAL_EDGE = 0.1;
+
+export function isRecoveryCandidateQualified(
+  candidate: MarketScanCandidate,
+  quote?: MarketScanQuote
+): boolean {
+  if (!candidate.ruleMatched || candidate.triggerMatches < RECOVERY_MIN_SIGNAL_COUNT) {
+    return false;
+  }
+
+  const score = scoreMarketCandidate(
+    candidate,
+    quote ?? { askPrice: 1, payout: 1 }
+  );
+  return score !== null &&
+    score.scoreFactors.statisticalEdge >= RECOVERY_MIN_STATISTICAL_EDGE &&
+    (quote === undefined || score.expectedReturn > 0);
+}
+
 export function rankMarketScanCandidates(
   candidates: MarketScanCandidate[]
 ): ScoredMarketScanCandidate[] {

@@ -26,6 +26,15 @@ export interface UserTradingStrategy {
   contractDescription: string;
 }
 
+export type StrategyGroup = 'A' | 'B' | 'C';
+
+export interface StrategyRecoveryState {
+  baseGroup: StrategyGroup;
+  activeGroup: StrategyGroup;
+  recoveryActive: boolean;
+  terminal: boolean;
+}
+
 export interface SavedBotSettings {
   marketSymbol?: string | null;
   stake?: string;
@@ -45,6 +54,83 @@ export function formatUserTradingStrategyDescription(description: string): strin
   return description
     .replace(/\b(?:differs?|different)\s+(?:from\s+)?[0-9]\b/gi, 'differs (0-9)')
     .replace(/\s+and\s+/gi, ' or ');
+}
+
+export function getStrategyGroup(strategy: UserTradingStrategy): StrategyGroup | null {
+  const contractModes = new Set(strategy.contractOptions.map((option) => option.contractMode));
+  if (contractModes.has('DIGITDIFF')) return 'A';
+  if (contractModes.has('DIGITEVEN') || contractModes.has('DIGITODD')) return 'C';
+  if (contractModes.has('DIGITOVER') || contractModes.has('DIGITUNDER')) return 'B';
+  return null;
+}
+
+export function createStrategyForGroup(
+  strategy: UserTradingStrategy,
+  group: StrategyGroup
+): UserTradingStrategy {
+  const contractOptions: StrategyContractOption[] = group === 'A'
+    ? [
+        { contractMode: 'DIGITOVER', barrier: 0, contractDescription: 'Over 0' },
+        { contractMode: 'DIGITUNDER', barrier: 9, contractDescription: 'Under 9' },
+        ...Array.from({ length: 10 }, (_, barrier) => ({
+          contractMode: 'DIGITDIFF' as const,
+          barrier,
+          contractDescription: `Differs from ${barrier}`,
+        })),
+      ]
+    : group === 'B'
+      ? [
+          { contractMode: 'DIGITOVER', barrier: 1, contractDescription: 'Over 1' },
+          { contractMode: 'DIGITUNDER', barrier: 8, contractDescription: 'Under 8' },
+        ]
+      : [
+          { contractMode: 'DIGITEVEN', barrier: null, contractDescription: 'Even' },
+          { contractMode: 'DIGITODD', barrier: null, contractDescription: 'Odd' },
+        ];
+  const firstOption = contractOptions[0]!;
+  const contractDescription = Array.from(new Set(contractOptions.map((option) =>
+    option.contractMode === 'DIGITDIFF' ? 'Differs (0-9)' : option.contractDescription
+  ))).join(' or ');
+
+  return {
+    ...strategy,
+    contractMode: firstOption.contractMode,
+    barrier: firstOption.barrier,
+    contractOptions,
+    contractDescription,
+  };
+}
+
+export function createStrategyRecoveryState(baseGroup: StrategyGroup): StrategyRecoveryState {
+  return {
+    baseGroup,
+    activeGroup: baseGroup,
+    recoveryActive: false,
+    terminal: false,
+  };
+}
+
+export function advanceStrategyRecoveryState(
+  state: StrategyRecoveryState,
+  settledProfit: number
+): StrategyRecoveryState {
+  if (state.baseGroup === 'C' || state.terminal || !Number.isFinite(settledProfit) || settledProfit === 0) {
+    return state;
+  }
+
+  if (settledProfit > 0) {
+    return state.recoveryActive
+      ? { ...state, activeGroup: state.baseGroup, recoveryActive: false }
+      : state;
+  }
+
+  if (state.activeGroup === 'A') {
+    return { ...state, activeGroup: 'B', recoveryActive: true };
+  }
+  if (state.activeGroup === 'B') {
+    return { ...state, activeGroup: 'C', recoveryActive: true };
+  }
+  return { ...state, activeGroup: 'C', recoveryActive: true, terminal: true };
 }
 
 function compileTrigger(condition: string): DigitTrigger | null {
@@ -169,17 +255,23 @@ export function compileUserTradingStrategy(description: string): StrategyCompila
       contractOptions.push(option);
     }
   };
+  const addDiffersOptions = () => {
+    for (let digit = 0; digit <= 9; digit += 1) {
+      addContractOption({
+        contractMode: 'DIGITDIFF',
+        barrier: digit,
+        contractDescription: `Differs from ${digit}`,
+      });
+    }
+  };
+  if (/\b(?:differs?|different)\s+\(0-9\)/i.test(contractText)) {
+    addDiffersOptions();
+  }
   const contractPattern =
     /\b(?:differs?|different)\s+(?:from\s+)?([0-9])\b|\b(?:over|above|greater\s+than)\s+([0-8])\b|\b(?:under|below|less\s+than)\s+([1-9])\b|\b(even|odd)\b/gi;
   for (const match of contractText.matchAll(contractPattern)) {
     if (match[1]) {
-      for (let digit = 0; digit <= 9; digit += 1) {
-        addContractOption({
-          contractMode: 'DIGITDIFF',
-          barrier: digit,
-          contractDescription: `Differs from ${digit}`,
-        });
-      }
+      addDiffersOptions();
     } else if (match[2]) {
       addContractOption({
         contractMode: 'DIGITOVER',
