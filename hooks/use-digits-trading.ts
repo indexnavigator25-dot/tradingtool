@@ -87,6 +87,7 @@ export interface AutoTradingScheduleProgress {
   deadlineAt: number;
   tradesInCurrentMinute: number;
   waitingForNextMinute: boolean;
+  nextIntervalAt: number | null;
 }
 
 export interface AutoTradingPrediction {
@@ -1104,6 +1105,7 @@ export function useDigitsTrading({
       deadlineAt: scheduleDeadlineAt,
       tradesInCurrentMinute: 0,
       waitingForNextMinute: false,
+      nextIntervalAt: null,
     });
     setThresholdResult(null);
     setAutoTradingStatus('scanning');
@@ -1184,19 +1186,23 @@ export function useDigitsTrading({
         if (tradesThisMinute < parsedTradesPerMinute) {
           if (waitingForNextMinute) {
             setAutoTradingSchedule((schedule) =>
-              schedule ? { ...schedule, waitingForNextMinute: false } : null
+              schedule
+                ? { ...schedule, waitingForNextMinute: false, nextIntervalAt: null }
+                : null
             );
           }
           return true;
         }
+        const nextMinuteAt = scheduleStartedAt + (minuteWindowIndex + 1) * 60_000;
         if (!waitingForNextMinute) {
           waitingForNextMinute = true;
           setAutoTradingSchedule((schedule) =>
-            schedule ? { ...schedule, waitingForNextMinute: true } : null
+            schedule
+              ? { ...schedule, waitingForNextMinute: true, nextIntervalAt: nextMinuteAt }
+              : null
           );
         }
 
-        const nextMinuteAt = scheduleStartedAt + (minuteWindowIndex + 1) * 60_000;
         const waitMs = Math.max(
           1,
           Math.min(nextMinuteAt, scheduleDeadlineAt) - Date.now()

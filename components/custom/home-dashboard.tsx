@@ -27,7 +27,10 @@ import type {
   AutoTradingScanProgress,
 } from '@/hooks/use-digits-trading';
 import type { SavedBot } from '@/components/strategy-builder';
-import { MarketScannerNotification } from '@/components/custom/market-scanner-notification';
+import {
+  MarketScannerNotification,
+  MarketScannerWaitingAnimation,
+} from '@/components/custom/market-scanner-notification';
 import { getSymbolDisplayName } from '@/lib/active-symbols-display-names';
 import { formatUserTradingStrategyDescription } from '@/lib/user-trading-strategy';
 import {
@@ -174,6 +177,17 @@ export function HomeDashboard({
     Math.floor((scheduleRemainingSeconds % 3600) / 60),
     scheduleRemainingSeconds % 60,
   ].map((value) => String(value).padStart(2, '0')).join(':');
+  const intervalRemainingSeconds = autoTradingSchedule?.waitingForNextMinute &&
+    autoTradingSchedule.nextIntervalAt
+    ? Math.max(0, Math.ceil((autoTradingSchedule.nextIntervalAt - scheduleClock) / 1000))
+    : 0;
+  const nextIntervalCountdown = [
+    Math.floor(intervalRemainingSeconds / 60),
+    intervalRemainingSeconds % 60,
+  ].map((value) => String(value).padStart(2, '0')).join(':');
+  const nextIntervalProgress = autoTradingSchedule?.waitingForNextMinute
+    ? Math.min(100, Math.max(0, ((60 - intervalRemainingSeconds) / 60) * 100))
+    : 0;
   const currency = transactions[0]?.currency || activeAccount?.currency || 'USD';
   const runningBots = autoTradingStatus === 'idle' ? 0 : 1;
   const activeBot = savedBots.find((bot) => bot.id === activeBotId);
@@ -388,21 +402,34 @@ export function HomeDashboard({
             {autoTradingStatus !== 'idle' && autoTradingScanProgress ? (
               <MarketScannerNotification
                 progress={autoTradingScanProgress}
+                schedule={autoTradingSchedule}
+                nextIntervalCountdown={nextIntervalCountdown}
+                nextIntervalProgress={nextIntervalProgress}
+                groupName={activeBot?.name ?? localize('Strategy Group')}
                 status={autoTradingStatus}
                 onStop={onStopAutoTrading}
               />
             ) : autoTradingStatus !== 'idle' ? (
               <div className="flex min-h-[220px] flex-col items-center justify-center rounded-lg border border-primary/20 bg-primary/[0.04] px-4 py-5 text-center">
-                <Radar className="market-scan-spinner h-7 w-7 text-primary" />
-                <p className="mt-3 text-xs font-semibold text-foreground">
-                  {autoTradingStatus === 'stopping'
-                    ? localize('Stopping bot...')
-                    : autoTradingSchedule?.waitingForNextMinute
-                      ? localize('Waiting for next minute')
-                      : autoTradingTradeCount > 0
-                        ? localize('Trade in progress')
-                        : localize('Connecting live feeds')}
-                </p>
+                {autoTradingSchedule?.waitingForNextMinute ? (
+                  <MarketScannerWaitingAnimation
+                    countdown={nextIntervalCountdown}
+                    progress={nextIntervalProgress}
+                    tradesUsed={autoTradingSchedule.tradesInCurrentMinute}
+                    tradesLimit={autoTradingSchedule.tradesPerMinute}
+                  />
+                ) : (
+                  <>
+                    <Radar className="market-scan-spinner h-7 w-7 text-primary" />
+                    <p className="mt-3 text-xs font-semibold text-foreground">
+                      {autoTradingStatus === 'stopping'
+                        ? localize('Stopping bot...')
+                        : autoTradingTradeCount > 0
+                          ? localize('Trade in progress')
+                          : localize('Connecting live feeds')}
+                    </p>
+                  </>
+                )}
                 <Button
                   type="button"
                   size="sm"

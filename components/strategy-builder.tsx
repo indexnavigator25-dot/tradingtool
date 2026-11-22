@@ -414,7 +414,7 @@ export function SavedBotsPanel({
                     <p className="mt-1 text-[10px] text-muted-foreground">
                       {localize('Markets: all open continuous indices · Stake: {{stake}} USD · Duration: {{duration}} ticks', {
                         stake: bot.stake ?? TRADING_DEFAULTS.stake,
-                        duration: bot.duration ?? 2,
+                        duration: bot.duration ?? TRADING_DEFAULTS.duration,
                       })}
                       {bot.takeProfit && ` · ${localize('TP: {{value}} USD', { value: bot.takeProfit })}`}
                       {bot.stopLoss && ` · ${localize('SL: {{value}} USD', { value: bot.stopLoss })}`}
