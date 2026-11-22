@@ -137,6 +137,11 @@ type ActiveTickSubscriber = (
   handler: (tick: Tick) => void
 ) => (() => void) | null;
 
+interface ScannedMarketSelection {
+  candidate: MarketScanCandidate;
+  qualified: boolean;
+}
+
 function getCandidatePrediction(
   candidate: MarketScanCandidate,
   scanNumber: number
@@ -1215,7 +1220,7 @@ export function useDigitsTrading({
       return false;
     };
 
-    const scanForMarket = async (): Promise<MarketScanCandidate | null> => {
+    const scanForMarket = async (): Promise<ScannedMarketSelection | null> => {
       setAutoTradingStatus('scanning');
       setAutoTradingMarket(null);
       setAutoTradingEstimatedWinRate(null);
@@ -1342,23 +1347,34 @@ export function useDigitsTrading({
               }
             : progress
         );
-        if (recoveryCandidates.length === 0) {
-          const rejectedUntil = candidatePool.length === 0
-            ? Math.min(...rejectedCandidates.values())
-            : Number.POSITIVE_INFINITY;
-          const retryDelay = Number.isFinite(rejectedUntil)
-            ? Math.max(0, rejectedUntil - Date.now())
-            : Math.min(1_000, Math.max(0, scheduleDeadlineAt - Date.now()));
-          if (retryDelay > 0) {
-            await new Promise((resolve) => setTimeout(resolve, retryDelay));
+        if (recoveryCandidates.length > 0) {
+          const qualifiedCandidate =
+            chooseBestHistoricalScanCandidate(recoveryCandidates);
+          if (qualifiedCandidate) {
+            return { candidate: qualifiedCandidate, qualified: true };
           }
-          continue;
         }
-        const candidate = chooseBestHistoricalScanCandidate(recoveryCandidates);
-        if (!candidate) {
-          throw new Error(localize('No market digit history was available to select a market.'));
+
+        const fallbackCandidate = candidatePool.length > 0
+          ? chooseBestHistoricalScanCandidate(candidatePool)
+          : null;
+        if (fallbackCandidate) {
+          return {
+            candidate: fallbackCandidate,
+            qualified: false,
+          };
         }
-        return candidate;
+
+        const rejectedUntil = candidatePool.length === 0
+          ? Math.min(...rejectedCandidates.values())
+          : Number.POSITIVE_INFINITY;
+        const retryDelay = Number.isFinite(rejectedUntil)
+          ? Math.max(0, rejectedUntil - Date.now())
+          : Math.min(1_000, Math.max(0, scheduleDeadlineAt - Date.now()));
+        if (retryDelay > 0) {
+          await new Promise((resolve) => setTimeout(resolve, retryDelay));
+        }
+        continue;
       }
       return null;
     };
@@ -1429,8 +1445,9 @@ export function useDigitsTrading({
       while (!session.stopRequested) {
         const hasScheduledSlot = await waitForScheduledSlot();
         if (!hasScheduledSlot) break;
-        const candidate = await scanForMarket();
-        if (!candidate) break;
+        const selection = await scanForMarket();
+        if (!selection) break;
+        const { candidate, qualified } = selection;
         if (Date.now() >= scheduleDeadlineAt) break;
         if (!scanOnly && !isAuthenticatedRef.current) {
           session.stopRequested = true;
@@ -1523,13 +1540,13 @@ export function useDigitsTrading({
           askPrice: quote.ask_price,
           payout: quote.payout,
         };
-        if (
+        if (qualified && (
           !isTradingCandidateQualified(candidate, marketQuote) ||
           (
             recoveryState?.recoveryActive &&
             !isRecoveryCandidateQualified(candidate, marketQuote)
           )
-        ) {
+        )) {
           skipUnfavorableCandidate(candidate);
           continue;
         }
