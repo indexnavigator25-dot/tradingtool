@@ -523,9 +523,11 @@ export function HomeDashboard({
                     <div className="min-w-0">
                       <p className="truncate text-xs font-semibold text-foreground">
                         {contractTypeLabels[trade.contractType] ?? trade.contractType}
-                        {trade.barrier !== null
-                          ? ` · ${localize('Barrier')} ${formatBarrier(trade.barrier, locale)}`
-                          : ''}
+                        {trade.contractType === 'DIGITEVEN' || trade.contractType === 'DIGITODD'
+                          ? ` · ${localize('No barrier')}`
+                          : trade.barrier !== null
+                            ? ` · ${localize('Barrier')} ${formatBarrier(trade.barrier, locale)}`
+                            : ''}
                         {' · '}
                         {getSymbolDisplayName(trade.symbol)}
                       </p>

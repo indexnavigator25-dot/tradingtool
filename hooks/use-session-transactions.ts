@@ -24,6 +24,13 @@ function isOpenPosition(position: OpenPosition): boolean {
   return !position.is_sold && !position.is_expired && position.status === 'open';
 }
 
+function getPositionBarrier(position: OpenPosition): string | null {
+  if (position.contract_type === 'DIGITEVEN' || position.contract_type === 'DIGITODD') {
+    return null;
+  }
+  return position.barrier ?? null;
+}
+
 function getPositionLastDigit(
   position: OpenPosition,
   pipSize: number,
@@ -94,7 +101,7 @@ export function useSessionTransactions(
         byId.set(position.contract_id, {
           contractId: position.contract_id,
           contractType: position.contract_type,
-          barrier: position.barrier ?? null,
+          barrier: getPositionBarrier(position),
           symbol: position.underlying_symbol,
           stake: position.buy_price,
           value: position.bid_price,

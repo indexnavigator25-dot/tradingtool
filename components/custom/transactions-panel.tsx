@@ -157,9 +157,12 @@ export function TransactionsPanel({
                   <div className="min-w-0">
                     <p className="truncate text-xs font-semibold text-foreground">
                       {typeLabel}
-                      {transaction.barrier !== null
-                        ? ` · ${localize('Barrier')} ${formatBarrier(transaction.barrier, locale)}`
-                        : ''}
+                      {transaction.contractType === 'DIGITEVEN' ||
+                      transaction.contractType === 'DIGITODD'
+                        ? ` · ${localize('No barrier')}`
+                        : transaction.barrier !== null
+                          ? ` · ${localize('Barrier')} ${formatBarrier(transaction.barrier, locale)}`
+                          : ''}
                       {' · '}
                       {getSymbolDisplayName(transaction.symbol)}
                     </p>

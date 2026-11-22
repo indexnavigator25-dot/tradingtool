@@ -191,7 +191,7 @@ export function MarketScannerNotification({
               </p>
             )}
             <p className="mt-1 text-[11px] text-muted-foreground">
-              {localize('Each scan rotates contract types and ranks rolling 1,000-tick histories within 15 seconds; recovery waits for high-confidence setups.')}
+              {localize('Each scan ranks all configured contracts across eligible markets within 15 seconds; recovery waits for high-confidence setups.')}
             </p>
             {progress.scanOnly && (
               <p className="mt-1 text-[11px] font-semibold text-primary">

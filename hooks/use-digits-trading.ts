@@ -21,7 +21,7 @@ import { useBaseTrading } from '@/hooks/use-base-trading';
 import type { UseBaseTradingParams } from '@/hooks/use-base-trading';
 import { computeDigitStats, getLastDigit, pipSizeFromPip } from '../lib/digit-stats';
 import {
-  chooseNextHistoricalScanCandidate,
+  chooseBestHistoricalScanCandidate,
   getContractBarrier,
   getScannableMarkets,
   MARKET_SCAN_TIMEOUT_MS,
@@ -1162,12 +1162,6 @@ export function useDigitsTrading({
     let recoveryState: StrategyRecoveryState | null = baseGroup
       ? createStrategyRecoveryState(baseGroup)
       : null;
-    const nextContractModeIndexByGroup: Record<StrategyGroup, number> = {
-      A: 0,
-      B: 0,
-      C: 0,
-    };
-    let nextCustomContractModeIndex = 0;
     let scanNumber = 0;
     let minuteWindowIndex = 0;
     const tradesByMinute = new Map<number, number>();
@@ -1243,9 +1237,6 @@ export function useDigitsTrading({
         const activeStrategy = activeGroup
           ? createStrategyForGroup(strategy, activeGroup)
           : strategy;
-        const contractModeOrder = Array.from(new Set(
-          activeStrategy.contractOptions.map((option) => option.contractMode)
-        ));
         const ruleDescription = activeGroup !== null &&
           activeGroup !== recoveryState?.baseGroup
           ? [
@@ -1253,9 +1244,6 @@ export function useDigitsTrading({
               strategy.triggers.map((trigger) => trigger.description).join(' or '),
             ].filter(Boolean).join(' · ')
           : strategy.description;
-        const nextContractModeIndex = activeGroup
-          ? nextContractModeIndexByGroup[activeGroup]
-          : nextCustomContractModeIndex;
 
         const eligibleMarkets = getScannableMarkets(symbols);
         if (eligibleMarkets.length === 0) {
@@ -1365,22 +1353,9 @@ export function useDigitsTrading({
           }
           continue;
         }
-        const candidate = chooseNextHistoricalScanCandidate(
-          recoveryCandidates,
-          contractModeOrder,
-          nextContractModeIndex
-        );
+        const candidate = chooseBestHistoricalScanCandidate(recoveryCandidates);
         if (!candidate) {
           throw new Error(localize('No market digit history was available to select a market.'));
-        }
-        const selectedModeIndex = contractModeOrder.indexOf(candidate.contractMode);
-        if (selectedModeIndex >= 0 && contractModeOrder.length > 0) {
-          if (activeGroup) {
-            nextContractModeIndexByGroup[activeGroup] =
-              (selectedModeIndex + 1) % contractModeOrder.length;
-          } else {
-            nextCustomContractModeIndex = (selectedModeIndex + 1) % contractModeOrder.length;
-          }
         }
         return candidate;
       }
