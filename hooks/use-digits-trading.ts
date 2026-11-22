@@ -1676,6 +1676,7 @@ export function useDigitsTrading({
         const next = getNextMartingaleStake(
           baseStake,
           multiplier,
+          martingaleMode,
           settledProfit,
           martingaleProgress
         );

@@ -55,10 +55,24 @@ export function formatUserTradingStrategyDescription(description: string): strin
 }
 
 export function getStrategyGroup(strategy: UserTradingStrategy): StrategyGroup | null {
-  const contractModes = new Set(strategy.contractOptions.map((option) => option.contractMode));
-  if (contractModes.has('DIGITDIFF')) return 'A';
-  if (contractModes.has('DIGITEVEN') || contractModes.has('DIGITODD')) return 'C';
-  if (contractModes.has('DIGITOVER') || contractModes.has('DIGITUNDER')) return 'B';
+  const options = strategy.contractOptions;
+  if (options.some((option) =>
+    option.contractMode === 'DIGITDIFF' ||
+    (option.contractMode === 'DIGITOVER' && option.barrier === 0) ||
+    (option.contractMode === 'DIGITUNDER' && option.barrier === 9)
+  )) {
+    return 'A';
+  }
+  if (options.some((option) =>
+    option.contractMode === 'DIGITEVEN' || option.contractMode === 'DIGITODD'
+  )) {
+    return 'C';
+  }
+  if (options.some((option) =>
+    option.contractMode === 'DIGITOVER' || option.contractMode === 'DIGITUNDER'
+  )) {
+    return 'B';
+  }
   return null;
 }
 
@@ -111,8 +125,14 @@ export function advanceStrategyRecoveryState(
   state: StrategyRecoveryState,
   settledProfit: number
 ): StrategyRecoveryState {
-  if (state.baseGroup === 'C' || !Number.isFinite(settledProfit) || settledProfit === 0) {
+  if (!Number.isFinite(settledProfit) || settledProfit === 0) {
     return state;
+  }
+
+  if (state.baseGroup === 'C') {
+    return settledProfit < 0
+      ? { ...state, activeGroup: 'C', recoveryActive: true }
+      : { ...state, activeGroup: 'C', recoveryActive: false };
   }
 
   if (settledProfit > 0) {
@@ -410,10 +430,16 @@ export function evaluateUserTradingStrategy(
     contractOption: StrategyContractOption,
     triggerDescription: string,
     ruleMatched: boolean,
-    signalOutcomes: boolean[]
+    signalOutcomes: boolean[],
+    baselineOutcomes: boolean[]
   ) => {
-    const wins = signalOutcomes.filter(Boolean).length;
-    const predictedWinRate = (wins + 1) / (signalOutcomes.length + 2);
+    const outcomes = ruleMatched && signalOutcomes.length > 0
+      ? signalOutcomes
+      : baselineOutcomes.length > 0
+        ? baselineOutcomes
+        : signalOutcomes;
+    const wins = outcomes.filter(Boolean).length;
+    const predictedWinRate = (wins + 1) / (outcomes.length + 2);
     candidates.push({
       symbol,
       contractMode: contractOption.contractMode,
@@ -421,9 +447,10 @@ export function evaluateUserTradingStrategy(
       predictionPrices,
       observedDigits: digits,
       signalOutcomes,
+      baselineOutcomes,
       predictedWinRate,
-      estimatedWinRate: signalOutcomes.length > 0
-        ? getWilsonLowerBound(wins, signalOutcomes.length)
+      estimatedWinRate: outcomes.length > 0
+        ? getWilsonLowerBound(wins, outcomes.length)
         : predictedWinRate,
       ruleMatched,
       sampleCount: predictionPrices.length,
@@ -436,6 +463,9 @@ export function evaluateUserTradingStrategy(
   };
 
   for (const contractOption of strategy.contractOptions) {
+    const baselineOutcomes = digits.slice(1).map((digit) =>
+      isWinningDigit(digit, contractOption.contractMode, contractOption.barrier)
+    );
     for (const trigger of strategy.triggers) {
       const triggerLength = getTriggerLength(trigger);
       const minimumWindow = triggerLength;
@@ -451,17 +481,20 @@ export function evaluateUserTradingStrategy(
       const signalOutcomes: boolean[] = [];
 
       for (let outcomeIndex = minimumWindow; outcomeIndex < digits.length; outcomeIndex += 1) {
-        if (!matchesAt(outcomeIndex)) continue;
-        signalOutcomes.push(
-          isWinningDigit(digits[outcomeIndex]!, contractOption.contractMode, contractOption.barrier)
+        const won = isWinningDigit(
+          digits[outcomeIndex]!,
+          contractOption.contractMode,
+          contractOption.barrier
         );
+        if (matchesAt(outcomeIndex)) signalOutcomes.push(won);
       }
 
       addCandidate(
         contractOption,
         trigger.description,
         ruleMatched,
-        signalOutcomes
+        signalOutcomes,
+        baselineOutcomes
       );
     }
   }

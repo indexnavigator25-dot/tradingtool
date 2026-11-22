@@ -26,6 +26,7 @@ export interface MarketScanCandidate {
   predictionPrices: number[];
   observedDigits: number[];
   signalOutcomes: boolean[];
+  baselineOutcomes?: boolean[];
   estimatedWinRate: number;
   predictedWinRate: number;
   ruleMatched: boolean;
@@ -124,11 +125,16 @@ export function scoreMarketCandidate(
     return null;
   }
 
-  const wins = candidate.signalOutcomes.filter(Boolean).length;
-  const historicalWinRate = candidate.signalOutcomes.length > 0
-    ? wins / candidate.signalOutcomes.length
+  const outcomes = candidate.ruleMatched && candidate.signalOutcomes.length > 0
+    ? candidate.signalOutcomes
+    : candidate.baselineOutcomes?.length
+      ? candidate.baselineOutcomes
+      : candidate.signalOutcomes;
+  const wins = outcomes.filter(Boolean).length;
+  const historicalWinRate = outcomes.length > 0
+    ? wins / outcomes.length
     : candidate.predictedWinRate;
-  const recentOutcomes = candidate.signalOutcomes.slice(-5);
+  const recentOutcomes = outcomes.slice(-5);
   const recentSignalAccuracy = recentOutcomes.length > 0
     ? recentOutcomes.filter(Boolean).length / recentOutcomes.length
     : historicalWinRate;
@@ -136,7 +142,7 @@ export function scoreMarketCandidate(
   const statisticalEdge = clamp(
     (historicalWinRate - randomWinRate) / (1 - randomWinRate)
   );
-  const drawdown = candidate.signalOutcomes.reduce(
+  const drawdown = outcomes.reduce(
     (state, won) => {
       const balance = state.balance + (won ? quote.payout - quote.askPrice : -quote.askPrice);
       const peak = Math.max(state.peak, balance);
@@ -148,17 +154,17 @@ export function scoreMarketCandidate(
     },
     { balance: 0, peak: 0, maximumDrawdown: 0 }
   );
-  const drawdownStability = candidate.signalOutcomes.length > 0
+  const drawdownStability = outcomes.length > 0
     ? clamp(
         1 - drawdown.maximumDrawdown /
-          (quote.askPrice * candidate.signalOutcomes.length)
+          (quote.askPrice * outcomes.length)
       )
     : 0.5;
   const scoreFactors: MarketScanScoreFactors = {
     historicalWinRate,
     recentSignalAccuracy,
     statisticalEdge,
-    consistency: getConsistencyScore(candidate.signalOutcomes),
+    consistency: getConsistencyScore(outcomes),
     marketSuitability: getMarketSuitabilityScore(candidate.observedDigits),
     drawdownStability,
   };
