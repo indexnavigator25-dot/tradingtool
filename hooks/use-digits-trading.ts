@@ -27,6 +27,7 @@ import {
   MARKET_SCAN_TIMEOUT_MS,
   MARKET_SCAN_TICK_COUNT,
   isRecoveryCandidateQualified,
+  isTradingCandidateQualified,
   scoreMarketCandidate,
 } from '../lib/market-scanner';
 import type { MarketScanCandidate } from '../lib/market-scanner';
@@ -1228,7 +1229,6 @@ export function useDigitsTrading({
         if (!connected) {
           return null;
         }
-        const scanStartedAt = Date.now();
         scanNumber += 1;
         const activeGroup = recoveryState?.activeGroup ?? null;
         const activeStrategy = activeGroup
@@ -1321,29 +1321,38 @@ export function useDigitsTrading({
           }
           return false;
         });
-        const candidatePool = candidatesToEvaluate.length > 0
-          ? candidatesToEvaluate
-          : scanResult.candidates;
+        const candidatePool = candidatesToEvaluate;
         const recoveryActive = recoveryState?.recoveryActive ?? false;
+        const signalCandidates = candidatePool.filter((candidate) =>
+          isTradingCandidateQualified(candidate)
+        );
         const recoveryCandidates = recoveryActive
-          ? candidatePool.filter((candidate) => isRecoveryCandidateQualified(candidate))
-          : candidatePool;
+          ? signalCandidates.filter((candidate) => isRecoveryCandidateQualified(candidate))
+          : signalCandidates;
+        const bestAvailableCandidate = recoveryCandidates.length === 0
+          ? chooseBestHistoricalScanCandidate(
+              candidatePool.length > 0 ? candidatePool : scanResult.candidates
+            )
+          : null;
         setAutoTradingScanProgress((progress) =>
           progress?.phase === 'evaluating'
             ? {
                 ...progress,
-                evaluatedCandidates: candidatePool.length,
-                eligibleCandidates: recoveryActive
-                  ? recoveryCandidates.length
-                  : candidatePool.filter((entry) => entry.ruleMatched).length,
+                evaluatedCandidates: scanResult.candidates.length,
+                eligibleCandidates: recoveryCandidates.length,
+                prediction: bestAvailableCandidate
+                  ? getCandidatePrediction(bestAvailableCandidate, scanNumber)
+                  : null,
               }
             : progress
         );
-        if (recoveryActive && recoveryCandidates.length === 0) {
-          const retryDelay = Math.max(
-            0,
-            MARKET_SCAN_TIMEOUT_MS - (Date.now() - scanStartedAt)
-          );
+        if (recoveryCandidates.length === 0) {
+          const rejectedUntil = candidatePool.length === 0
+            ? Math.min(...rejectedCandidates.values())
+            : Number.POSITIVE_INFINITY;
+          const retryDelay = Number.isFinite(rejectedUntil)
+            ? Math.max(0, rejectedUntil - Date.now())
+            : Math.min(1_000, Math.max(0, scheduleDeadlineAt - Date.now()));
           if (retryDelay > 0) {
             await new Promise((resolve) => setTimeout(resolve, retryDelay));
           }
@@ -1507,20 +1516,21 @@ export function useDigitsTrading({
         if (!Number.isFinite(quote.payout) || quote.payout <= 0) {
           throw new Error(localize('The proposal did not include a valid potential payout.'));
         }
+        const marketQuote = {
+          askPrice: quote.ask_price,
+          payout: quote.payout,
+        };
         if (
-          recoveryState?.recoveryActive &&
-          !isRecoveryCandidateQualified(candidate, {
-            askPrice: quote.ask_price,
-            payout: quote.payout,
-          })
+          !isTradingCandidateQualified(candidate, marketQuote) ||
+          (
+            recoveryState?.recoveryActive &&
+            !isRecoveryCandidateQualified(candidate, marketQuote)
+          )
         ) {
           skipUnfavorableCandidate(candidate);
           continue;
         }
-        const refreshedCandidate = scoreMarketCandidate(candidate, {
-          askPrice: quote.ask_price,
-          payout: quote.payout,
-        });
+        const refreshedCandidate = scoreMarketCandidate(candidate, marketQuote);
         if (!refreshedCandidate) {
           throw new Error(localize('The scanner could not score a valid market proposal.'));
         }

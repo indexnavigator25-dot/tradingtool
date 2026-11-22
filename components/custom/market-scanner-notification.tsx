@@ -141,7 +141,11 @@ export function MarketScannerNotification({
     : progress.scanOnly
       ? localize('TEST MODE · NO TRADES')
     : isEvaluating
-      ? localize('RANKING ELIGIBLE MARKETS')
+      ? progress.eligibleCandidates === 0
+        ? hasSignal
+          ? localize('CHECKING ENTRY QUALITY')
+          : localize('WAITING FOR RULE')
+        : localize('RANKING ELIGIBLE MARKETS')
       : hasSignal
         ? localize('ENTRY CONDITION FOUND')
         : localize('WAITING FOR RULE');
@@ -382,7 +386,13 @@ export function MarketScannerNotification({
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <p className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground">
-                  {localize(isSelected ? 'SELECTED' : 'TOP PICK')}
+                  {localize(
+                    isSelected
+                      ? 'SELECTED'
+                      : progress.eligibleCandidates === 0
+                        ? 'BEST AVAILABLE'
+                        : 'TOP PICK'
+                  )}
                 </p>
                 <p className="truncate text-sm font-bold" title={prediction.market}>
                   {progress.selectedMarket ?? prediction.market} · {predictionContractLabel}
