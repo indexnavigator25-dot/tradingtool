@@ -29,6 +29,7 @@ import type {
 import type { SavedBot } from '@/components/strategy-builder';
 import { MarketScannerNotification } from '@/components/custom/market-scanner-notification';
 import { getSymbolDisplayName } from '@/lib/active-symbols-display-names';
+import { formatUserTradingStrategyDescription } from '@/lib/user-trading-strategy';
 import {
   formatDate,
   formatInteger,
@@ -578,7 +579,9 @@ export function HomeDashboard({
                     </span>
                     <div className="min-w-0">
                       <p className="truncate text-xs font-semibold text-foreground">{bot.name}</p>
-                      <p className="truncate text-[10px] text-muted-foreground">{bot.description}</p>
+                      <p className="truncate text-[10px] text-muted-foreground">
+                        {formatUserTradingStrategyDescription(bot.description)}
+                      </p>
                     </div>
                   </div>
                   <div className="flex shrink-0 items-center gap-2">

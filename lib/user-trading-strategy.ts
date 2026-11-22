@@ -41,6 +41,12 @@ export type StrategyCompilation =
   | { strategy: UserTradingStrategy; error: null }
   | { strategy: null; error: string };
 
+export function formatUserTradingStrategyDescription(description: string): string {
+  return description
+    .replace(/\b(?:differs?|different)\s+(?:from\s+)?[0-9]\b/gi, 'differs (0-9)')
+    .replace(/\s+and\s+/gi, ' or ');
+}
+
 function compileTrigger(condition: string): DigitTrigger | null {
   const lossRunMatch = condition.match(
     /\b(\d+)\s+consecutive\s+losing\s+digits?\b/
@@ -154,30 +160,41 @@ export function compileUserTradingStrategy(description: string): StrategyCompila
   const contractText = normalized.slice(0, conditionStart).toLowerCase();
   const conditionText = normalized.slice(conditionStart).toLowerCase();
   const contractOptions: StrategyContractOption[] = [];
+  const addContractOption = (option: StrategyContractOption) => {
+    if (!contractOptions.some(
+      (candidate) =>
+        candidate.contractMode === option.contractMode &&
+        candidate.barrier === option.barrier
+    )) {
+      contractOptions.push(option);
+    }
+  };
   const contractPattern =
     /\b(?:differs?|different)\s+(?:from\s+)?([0-9])\b|\b(?:over|above|greater\s+than)\s+([0-8])\b|\b(?:under|below|less\s+than)\s+([1-9])\b|\b(even|odd)\b/gi;
   for (const match of contractText.matchAll(contractPattern)) {
     if (match[1]) {
-      contractOptions.push({
-        contractMode: 'DIGITDIFF',
-        barrier: Number(match[1]),
-        contractDescription: `Differs from ${match[1]}`,
-      });
+      for (let digit = 0; digit <= 9; digit += 1) {
+        addContractOption({
+          contractMode: 'DIGITDIFF',
+          barrier: digit,
+          contractDescription: `Differs from ${digit}`,
+        });
+      }
     } else if (match[2]) {
-      contractOptions.push({
+      addContractOption({
         contractMode: 'DIGITOVER',
         barrier: Number(match[2]),
         contractDescription: `Over ${match[2]}`,
       });
     } else if (match[3]) {
-      contractOptions.push({
+      addContractOption({
         contractMode: 'DIGITUNDER',
         barrier: Number(match[3]),
         contractDescription: `Under ${match[3]}`,
       });
     } else if (match[4]) {
       const contractMode = match[4] === 'even' ? 'DIGITEVEN' : 'DIGITODD';
-      contractOptions.push({
+      addContractOption({
         contractMode,
         barrier: null,
         contractDescription: match[4] === 'even' ? 'Even' : 'Odd',
@@ -192,8 +209,11 @@ export function compileUserTradingStrategy(description: string): StrategyCompila
     };
   }
   const { contractMode, barrier } = contractOptions[0]!;
-  const contractDescription = contractOptions
-    .map((option) => option.contractDescription)
+  const contractDescription = Array.from(new Set(contractOptions.map((option) =>
+    option.contractMode === 'DIGITDIFF'
+      ? 'Differs (0-9)'
+      : option.contractDescription
+  )))
     .join(' / ');
 
   const triggerParts = conditionText.split(/\s+(?:and|or)\s+/i);
@@ -211,7 +231,7 @@ export function compileUserTradingStrategy(description: string): StrategyCompila
       barrier,
       contractOptions,
       triggers: triggers.filter((trigger): trigger is DigitTrigger => trigger !== null),
-      description: normalized.replace(/\s+and\s+/gi, ' or '),
+      description: formatUserTradingStrategyDescription(normalized),
       contractDescription,
     },
     error: null,

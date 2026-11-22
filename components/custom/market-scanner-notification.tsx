@@ -70,7 +70,7 @@ export function MarketScannerNotification({
       : progress.historyLoadedMarkets > 0
         ? localize('Loading historical tick data')
         : localize('Connecting live feeds');
-  const scoreFactors = prediction
+  const scoreFactors = prediction?.scoreFactors
     ? [
         { label: localize('Historical win rate (25%)'), value: prediction.scoreFactors.historicalWinRate },
         { label: localize('Recent signal accuracy (20%)'), value: prediction.scoreFactors.recentSignalAccuracy },
@@ -166,13 +166,6 @@ export function MarketScannerNotification({
                 })}
               </p>
             )}
-            {progress.negativeExpectedReturnCandidates > 0 && (
-              <p className="mt-1 text-[11px] font-medium text-amber-600 dark:text-amber-400">
-                {localize('{{count}} candidates rejected for negative expected return', {
-                  count: progress.negativeExpectedReturnCandidates,
-                })}
-              </p>
-            )}
             {isEvaluating && (
               <p className="mt-1 text-[11px] text-muted-foreground">
                 {localize('{{evaluated}} evaluated · {{eligible}} eligible candidates', {
@@ -185,7 +178,7 @@ export function MarketScannerNotification({
               {localize('Bot rule: {{rule}}', { rule: progress.ruleDescription })}
             </p>
             <p className="mt-1 text-[11px] text-muted-foreground">
-              {localize('Each market uses a rolling 1,000-tick history with live updates. After analysis, one market and one contract direction are selected for each trade.')}
+              {localize('Each scan uses rolling 1,000-tick histories and selects one market and contract direction within 15 seconds.')}
             </p>
             {progress.scanOnly && (
               <p className="mt-1 text-[11px] font-semibold text-primary">
@@ -231,18 +224,34 @@ export function MarketScannerNotification({
               </div>
               <div className="shrink-0 text-right">
                 <p className="font-mono text-sm font-bold text-primary">
-                  {prediction.weightedScore.toFixed(1)}
+                  {prediction.weightedScore?.toFixed(1) ?? '—'}
                 </p>
                 <p className="text-[9px] font-medium text-muted-foreground">
                   {localize('Weighted score / 100')}
                 </p>
               </div>
             </div>
-            <p className="text-[10px] font-medium text-muted-foreground">
-              {localize('Expected return: {{amount}} USD per trade', {
-                amount: prediction.expectedReturn.toFixed(2),
-              })}
-            </p>
+            {prediction.expectedReturn !== null ? (
+              <p className="text-[10px] font-medium text-muted-foreground">
+                {localize('Expected return: {{amount}} USD per trade', {
+                  amount: prediction.expectedReturn.toFixed(2),
+                })}
+              </p>
+            ) : (
+              <p className="text-[10px] font-medium text-muted-foreground">
+                {localize('Selected by historical score; the live contract quote is checked before purchase.')}
+              </p>
+            )}
+            {!prediction.ruleMatched && (
+              <p className="text-[10px] font-semibold text-amber-600 dark:text-amber-400">
+                {localize('15-second fallback selected this setup before its entry rule matched.')}
+              </p>
+            )}
+            {prediction.expectedReturn !== null && prediction.expectedReturn < 0 && (
+              <p className="text-[10px] font-semibold text-amber-600 dark:text-amber-400">
+                {localize('The best available setup has a negative estimated return.')}
+              </p>
+            )}
             <div className="grid grid-cols-2 gap-x-3 gap-y-1 border-t border-border/70 pt-2 sm:grid-cols-3">
               {scoreFactors.map(({ label, value }) => (
                 <div key={label} className="flex items-center justify-between gap-1 text-[9px] text-muted-foreground">
@@ -274,7 +283,7 @@ export function MarketScannerNotification({
           <div className="mt-3 rounded-xl border border-border bg-muted/30 px-3 py-2 text-[11px] text-muted-foreground">
             {isEvaluating
               ? localize('Evaluating all market and contract directions before selecting one.')
-              : localize('Waiting for enough live history to analyze each direction.')}
+              : localize('Analyzing rolling history; a market will be selected within 15 seconds.')}
           </div>
         )}
 

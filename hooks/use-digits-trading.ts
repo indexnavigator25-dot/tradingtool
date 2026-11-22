@@ -21,12 +21,11 @@ import { useBaseTrading } from '@/hooks/use-base-trading';
 import type { UseBaseTradingParams } from '@/hooks/use-base-trading';
 import { computeDigitStats, getLastDigit, pipSizeFromPip } from '../lib/digit-stats';
 import {
-  chooseBestScanCandidate,
+  chooseBestHistoricalScanCandidate,
   getContractBarrier,
   getScannableMarkets,
   MARKET_SCAN_TIMEOUT_MS,
   MARKET_SCAN_TICK_COUNT,
-  rankMarketScanCandidates,
   scoreMarketCandidate,
 } from '../lib/market-scanner';
 import type { MarketScanCandidate } from '../lib/market-scanner';
@@ -58,7 +57,6 @@ export interface AutoTradingScanProgress {
   historyUnavailableMarkets: number;
   evaluatedCandidates: number;
   eligibleCandidates: number;
-  negativeExpectedReturnCandidates: number;
   scanNumber: number;
   ruleDescription: string;
   selectedMarket: string | null;
@@ -87,9 +85,9 @@ export interface AutoTradingPrediction {
   triggerMatches: number;
   triggerDescription: string;
   ruleMatched: boolean;
-  expectedReturn: number;
-  weightedScore: number;
-  scoreFactors: NonNullable<MarketScanCandidate['scoreFactors']>;
+  expectedReturn: number | null;
+  weightedScore: number | null;
+  scoreFactors: MarketScanCandidate['scoreFactors'];
 }
 
 type MarketScanProgressCallback = (
@@ -123,9 +121,13 @@ type ActiveTickSubscriber = (
 ) => (() => void) | null;
 
 function getCandidatePrediction(
-  candidate: ScoredMarketScanCandidate,
+  candidate: MarketScanCandidate,
   scanNumber: number
 ): AutoTradingPrediction {
+  const historicalScore = candidate.scoreFactors
+    ? null
+    : scoreMarketCandidate(candidate, { askPrice: 1, payout: 1 });
+  const quoteAvailable = candidate.expectedReturn !== null;
   return {
     scanNumber,
     market: candidate.symbol.underlying_symbol_name || candidate.symbol.underlying_symbol,
@@ -137,9 +139,9 @@ function getCandidatePrediction(
     triggerMatches: candidate.triggerMatches,
     triggerDescription: candidate.triggerDescription,
     ruleMatched: candidate.ruleMatched,
-    expectedReturn: candidate.expectedReturn,
-    weightedScore: candidate.weightedScore,
-    scoreFactors: candidate.scoreFactors,
+    expectedReturn: quoteAvailable ? candidate.expectedReturn : null,
+    weightedScore: candidate.weightedScore ?? historicalScore?.weightedScore ?? null,
+    scoreFactors: candidate.scoreFactors ?? historicalScore?.scoreFactors ?? null,
   };
 }
 
@@ -217,17 +219,13 @@ async function scanMarkets(
       const candidates: MarketScanCandidate[] = [];
       for (const symbol of openSymbols) {
         const symbolCode = symbol.underlying_symbol;
-        if (
-          unavailableSymbols.has(symbolCode) ||
-          !historyResolvedSymbols.has(symbolCode) ||
-          !liveUpdatedSymbols.has(symbolCode)
-        ) continue;
+        if (!historyResolvedSymbols.has(symbolCode)) continue;
         candidates.push(
           ...evaluateUserTradingStrategy(
             symbol,
             pricesBySymbol.get(symbolCode) ?? [],
             strategy
-          ).filter((candidate) => candidate.ruleMatched)
+          )
         );
       }
 
@@ -455,7 +453,7 @@ async function scanMarkets(
     const handleTick = (symbolCode: string, tick: Tick) => {
       if (finished) return;
       if (shouldStop()) {
-        finish(null);
+        finish(getScanResult());
         return;
       }
       if (tick.symbol !== symbolCode || !Number.isFinite(tick.quote)) return;
@@ -491,10 +489,12 @@ async function scanMarkets(
     pendingSubscriptions = openSymbols.length - activeSymbols.size;
     const isMarketReady = (symbol: ActiveSymbol) => {
       const symbolCode = symbol.underlying_symbol;
-      return unavailableSymbols.has(symbolCode) ||
+      return historyResolvedSymbols.has(symbolCode) &&
         (
-          historyResolvedSymbols.has(symbolCode) &&
-          liveUpdatedSymbols.has(symbolCode) &&
+          unavailableSymbols.has(symbolCode) ||
+          liveUpdatedSymbols.has(symbolCode)
+        ) &&
+        (
           (pricesBySymbol.get(symbolCode)?.length ?? 0) >= minimumTriggerLength
         );
     };
@@ -507,11 +507,6 @@ async function scanMarkets(
         setTimeout(() => {
           if (!ws.isConnected) {
             finish(CONNECTION_LOST);
-          } else {
-            finish(
-              null,
-              new Error('The scanner could not subscribe to live ticks for any open continuous index.')
-            );
           }
         }, 0);
       }
@@ -528,27 +523,30 @@ async function scanMarkets(
     };
 
     pollForStop = setInterval(() => {
-      if (shouldStop()) finish(null);
+      if (shouldStop()) finish(getScanResult());
     }, CONNECTION_POLL_INTERVAL_MS);
     scanTimeout = setTimeout(() => {
       if (!finished) {
-        if (availableFeeds === 0) {
+        for (const symbol of openSymbols) {
+          const symbolCode = symbol.underlying_symbol;
+          if (!historyResolvedSymbols.has(symbolCode)) {
+            initializeHistory(symbolCode, [], [], 'cached');
+          }
+          if (!liveUpdatedSymbols.has(symbolCode)) {
+            unavailableSymbols.add(symbolCode);
+          }
+        }
+        reportProgress();
+        checkScanCompletion();
+        if (finished) return;
+        const result = getScanResult();
+        if (result.candidates.length === 0) {
           finish(
             null,
-            new Error('The scanner could not subscribe to live ticks for any open continuous index.')
+            new Error('No market digit history was available to select a market within 15 seconds.')
           );
         } else {
-          for (const symbol of openSymbols) {
-            const symbolCode = symbol.underlying_symbol;
-            if (!historyResolvedSymbols.has(symbolCode)) {
-              historyUnavailableSymbols.add(symbolCode);
-            }
-            if (!liveUpdatedSymbols.has(symbolCode)) {
-              unavailableSymbols.add(symbolCode);
-            }
-          }
-          reportProgress();
-          finish(getScanResult());
+          finish(result);
         }
       }
     }, MARKET_SCAN_TIMEOUT_MS);
@@ -1199,7 +1197,7 @@ export function useDigitsTrading({
       return false;
     };
 
-    const scanForMarket = async (): Promise<ScoredMarketScanCandidate | null> => {
+    const scanForMarket = async (): Promise<MarketScanCandidate | null> => {
       setAutoTradingStatus('scanning');
       setAutoTradingMarket(null);
       setAutoTradingEstimatedWinRate(null);
@@ -1229,7 +1227,6 @@ export function useDigitsTrading({
           historyUnavailableMarkets: 0,
           evaluatedCandidates: 0,
           eligibleCandidates: 0,
-          negativeExpectedReturnCandidates: 0,
           scanNumber,
           ruleDescription: strategy.description,
           selectedMarket: null,
@@ -1279,7 +1276,6 @@ export function useDigitsTrading({
         );
 
         const candidatesToEvaluate = scanResult.candidates.filter((candidate) => {
-          if (!candidate.ruleMatched) return false;
           const key = getScanCandidateKey(
             candidate.symbol.underlying_symbol,
             candidate.contractMode,
@@ -1293,99 +1289,25 @@ export function useDigitsTrading({
           }
           return false;
         });
-        const scoredCandidates: MarketScanCandidate[] = [];
-        let evaluatedCandidates = 0;
-        let negativeExpectedReturnCandidates = 0;
-        let shouldRescanAfterReconnect = false;
-
-        for (const candidate of candidatesToEvaluate) {
-          if (session.stopRequested || Date.now() >= scheduleDeadlineAt) return null;
-          const barrier = candidate.barrier ?? undefined;
-          const proposalParams = {
-            proposal: 1,
-            amount: nextStake,
-            basis: 'stake',
-            contract_type: candidate.contractMode,
-            currency: 'USD',
-            underlying_symbol: candidate.symbol.underlying_symbol,
-            duration: tradeDuration,
-            duration_unit: 't',
-            ...(barrier !== undefined ? { barrier } : {}),
-          };
-          let proposalResponse: ProposalResponse | null = null;
-          let connectionDropped = false;
-          const removeConnectionListener = tradingWs.onConnectionStateChange((connected) => {
-            if (!connected) connectionDropped = true;
-          });
-          try {
-            proposalResponse = await tradingWs.send<ProposalResponse>(proposalParams);
-          } catch (error) {
-            if (session.stopRequested) return null;
-            if (isNoReturnContractError(error)) {
-              skipUnfavorableCandidate(candidate);
-            } else if (!connectionDropped && tradingWs.isConnected) {
-              throw error;
-            } else {
-              const reconnected = await waitForConnection(
-                tradingWs,
-                Math.min(Date.now() + CONTRACT_SETTLEMENT_TIMEOUT_MS, scheduleDeadlineAt),
-                () => session.stopRequested || Date.now() >= scheduleDeadlineAt
-              );
-              if (!reconnected) return null;
-              shouldRescanAfterReconnect = true;
-            }
-          } finally {
-            removeConnectionListener();
-          }
-
-          if (shouldRescanAfterReconnect) break;
-          evaluatedCandidates += 1;
-          if (!proposalResponse) {
-            setAutoTradingScanProgress((progress) =>
-              progress?.phase === 'evaluating'
-                ? { ...progress, evaluatedCandidates }
-                : progress
-            );
-            continue;
-          }
-
-          const quote = proposalResponse.proposal;
-          if (!quote?.id || !Number.isFinite(quote.ask_price) || quote.ask_price <= 0) {
-            throw new Error(localize('Could not get a valid proposal for the next trade.'));
-          }
-          if (!Number.isFinite(quote.payout) || quote.payout <= 0) {
-            throw new Error(localize('The proposal did not include a valid potential payout.'));
-          }
-          const scoredCandidate = scoreMarketCandidate(candidate, {
-            askPrice: quote.ask_price,
-            payout: quote.payout,
-          });
-          if (!scoredCandidate) {
-            throw new Error(localize('The scanner could not score a valid market proposal.'));
-          }
-          if (scoredCandidate.expectedReturn < 0) {
-            negativeExpectedReturnCandidates += 1;
-            skipUnfavorableCandidate(candidate);
-          } else {
-            scoredCandidates.push(scoredCandidate);
-          }
-
-          const eligibleCandidates = rankMarketScanCandidates(scoredCandidates);
-          setAutoTradingScanProgress((progress) =>
-            progress?.phase === 'evaluating'
-              ? {
-                  ...progress,
-                  evaluatedCandidates,
-                  eligibleCandidates: eligibleCandidates.length,
-                  negativeExpectedReturnCandidates,
-                }
-              : progress
-          );
+        const candidatePool = candidatesToEvaluate.length > 0
+          ? candidatesToEvaluate
+          : scanResult.candidates;
+        const candidate = chooseBestHistoricalScanCandidate(candidatePool);
+        if (!candidate) {
+          throw new Error(localize('No market digit history was available to select a market.'));
         }
-
-        if (shouldRescanAfterReconnect) continue;
-        const bestCandidate = chooseBestScanCandidate(scoredCandidates);
-        if (bestCandidate) return bestCandidate;
+        setAutoTradingScanProgress((progress) =>
+          progress?.phase === 'evaluating'
+            ? {
+                ...progress,
+                evaluatedCandidates: candidatePool.length,
+                eligibleCandidates: candidatePool.filter(
+                  (entry) => entry.ruleMatched
+                ).length,
+              }
+            : progress
+        );
+        return candidate;
       }
       return null;
     };
@@ -1480,7 +1402,7 @@ export function useDigitsTrading({
                 }
               : progress
           );
-          await new Promise((resolve) => setTimeout(resolve, 3000));
+          await new Promise((resolve) => setTimeout(resolve, MARKET_SCAN_TIMEOUT_MS));
           if (session.stopRequested) break;
           continue;
         }
@@ -1545,10 +1467,6 @@ export function useDigitsTrading({
         });
         if (!refreshedCandidate) {
           throw new Error(localize('The scanner could not score a valid market proposal.'));
-        }
-        if (refreshedCandidate.expectedReturn < 0) {
-          skipUnfavorableCandidate(candidate);
-          continue;
         }
         useScannedMarket(refreshedCandidate);
         const hasPurchaseSlot = await waitForScheduledSlot();

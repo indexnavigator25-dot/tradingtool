@@ -4,7 +4,10 @@ import { useCallback, useEffect, useState } from 'react';
 import { AlertCircle, Bot, Play, Plus, Save, Square, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useAppTranslations } from '@/components/custom/i18n-provider';
-import { compileUserTradingStrategy } from '@/lib/user-trading-strategy';
+import {
+  compileUserTradingStrategy,
+  formatUserTradingStrategyDescription,
+} from '@/lib/user-trading-strategy';
 import type { SavedBotSettings, StrategyCompilation } from '@/lib/user-trading-strategy';
 import { TRADING_DEFAULTS } from '@/lib/trading-defaults';
 
@@ -409,7 +412,9 @@ export function SavedBotsPanel({
               >
                 <div className="min-w-0">
                   <p className="truncate text-sm font-semibold text-foreground">{bot.name}</p>
-                  <p className="mt-1 break-words text-xs text-muted-foreground">{bot.description}</p>
+                  <p className="mt-1 break-words text-xs text-muted-foreground">
+                    {formatUserTradingStrategyDescription(bot.description)}
+                  </p>
                   {(bot.stake || bot.maximumStake || bot.duration || bot.takeProfit || bot.stopLoss) && (
                     <p className="mt-1 text-[10px] text-muted-foreground">
                       {localize('Markets: all open continuous indices · Stake: {{stake}} USD · Max: {{maximumStake}} USD · Duration: {{duration}} ticks', {

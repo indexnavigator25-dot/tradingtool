@@ -3,7 +3,7 @@ import type { ActiveSymbol } from '@deriv/core';
 import type { ContractMode } from '@/lib/types';
 
 export const MARKET_SCAN_TICK_COUNT = 1000;
-export const MARKET_SCAN_TIMEOUT_MS = 120_000;
+export const MARKET_SCAN_TIMEOUT_MS = 15_000;
 
 export interface MarketScanScoreFactors {
   historicalWinRate: number;
@@ -203,6 +203,41 @@ export function chooseBestScanCandidate(
   candidates: MarketScanCandidate[]
 ): ScoredMarketScanCandidate | null {
   return rankMarketScanCandidates(candidates)[0] ?? null;
+}
+
+export function rankHistoricalScanCandidates(
+  candidates: MarketScanCandidate[]
+): MarketScanCandidate[] {
+  const scoredCandidates = candidates
+    .map((candidate) => ({
+      candidate,
+      score: scoreMarketCandidate(candidate, { askPrice: 1, payout: 1 }),
+    }))
+    .filter(
+      (entry): entry is {
+        candidate: MarketScanCandidate;
+        score: ScoredMarketScanCandidate;
+      } => entry.score !== null
+    );
+
+  return scoredCandidates
+    .sort(
+      (left, right) =>
+        Number(right.candidate.ruleMatched) - Number(left.candidate.ruleMatched) ||
+        right.score.weightedScore - left.score.weightedScore ||
+        right.candidate.estimatedWinRate - left.candidate.estimatedWinRate ||
+        right.candidate.triggerMatches - left.candidate.triggerMatches ||
+        left.candidate.symbol.underlying_symbol.localeCompare(right.candidate.symbol.underlying_symbol) ||
+        left.candidate.contractMode.localeCompare(right.candidate.contractMode) ||
+        (left.candidate.barrier ?? -1) - (right.candidate.barrier ?? -1)
+    )
+    .map(({ candidate }) => candidate);
+}
+
+export function chooseBestHistoricalScanCandidate(
+  candidates: MarketScanCandidate[]
+): MarketScanCandidate | null {
+  return rankHistoricalScanCandidates(candidates)[0] ?? null;
 }
 
 export function getContractBarrier(
