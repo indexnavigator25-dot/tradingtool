@@ -68,17 +68,23 @@ export function ThresholdResultDialog({ result, onClose }: ThresholdResultDialog
                 : localize('Auto-trading stopped at its stop-loss limit.')}
             </p>
 
-            {isTakeProfit && (
-              <div aria-hidden="true" className="take-profit-celebration">
-                {['💲', '💵', '💸', '💱', '🎉', '🎉', '🍾', '🎊', '🎊'].map(
-                  (emoji, index) => (
-                    <span className="take-profit-emoji" key={`${emoji}-${index}`}>
-                      {emoji}
-                    </span>
-                  )
-                )}
+            <div
+              aria-hidden="true"
+              className={`threshold-outcome-visual threshold-outcome-visual--${outcomeStyle}`}
+            >
+              <span className="threshold-outcome-orbit threshold-outcome-orbit--outer" />
+              <span className="threshold-outcome-orbit threshold-outcome-orbit--inner" />
+              <div className="threshold-outcome-bars">
+                {Array.from({ length: 7 }, (_, index) => <span key={index} />)}
               </div>
-            )}
+              <div className="threshold-outcome-particles">
+                {Array.from({ length: 8 }, (_, index) => <span key={index} />)}
+              </div>
+              <ProfitIcon className="threshold-outcome-direction" />
+              <span className="threshold-outcome-label">
+                {localize(isTakeProfit ? 'PROFIT TARGET HIT' : 'LOSS LIMIT HIT')}
+              </span>
+            </div>
 
             <div
               className={`grid grid-cols-[auto_1px_minmax(0,1fr)_1px_minmax(0,1fr)] items-center gap-2 rounded-xl border p-3 ${

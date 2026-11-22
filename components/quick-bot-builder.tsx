@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { Bot, Play, Plus, RotateCcw, Settings2, Trash2, X, Zap } from 'lucide-react';
+import { Bot, Play, Plus, RotateCcw, Settings2, Sparkles, Trash2, X, Zap } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -505,8 +505,9 @@ export function QuickBotBuilder({
               <h4 className="text-xs font-bold uppercase tracking-wider text-foreground">
                 {localize('Entry conditions')}
               </h4>
-              <span className="text-[10px] text-muted-foreground">
-                {localize('Any condition can match')}
+              <span className="inline-flex items-center gap-1 rounded-full border border-primary/30 bg-primary/10 px-2 py-1 text-[9px] font-bold uppercase tracking-wider text-primary">
+                <Sparkles className="h-3 w-3" />
+                {localize('AUTO PICK')}
               </span>
             </div>
 
@@ -855,9 +856,8 @@ export function QuickBotBuilder({
       <div className="space-y-2 border-t border-border/70 pt-3">
         {compilation.strategy ? (
           <p className="text-xs text-muted-foreground">
-            {localize('Rule preview: {{contract}} · Entry: {{condition}}', {
+            {localize('Rule preview: {{contract}} · Auto-picks the best-fit condition for every group', {
               contract: compilation.strategy.contractDescription,
-              condition: compilation.strategy.triggers.map((trigger) => trigger.description).join(' or '),
             })}
           </p>
         ) : (

@@ -13,22 +13,20 @@
 
 @keyframes brand-logo-breathe {
   0%, 100% {
-    filter: drop-shadow(0 0 3px rgb(var(--primary) / 0.24));
     transform: scale(1) rotate(0deg);
+    opacity: 0.92;
   }
   50% {
-    filter: drop-shadow(0 0 10px rgb(var(--primary) / 0.7));
     transform: scale(1.08) rotate(2deg);
+    opacity: 1;
   }
 }
 
 @keyframes brand-name-grow {
   0%, 100% {
-    text-shadow: 0 0 4px rgb(var(--primary) / 0.18);
     transform: scale(1);
   }
   50% {
-    text-shadow: 0 0 14px rgb(var(--primary) / 0.55);
     transform: scale(1.055);
   }
 }
@@ -72,6 +70,180 @@
 .threshold-result-overlay--loss {
   background: radial-gradient(ellipse at center, rgb(244 63 94 / 0.2), transparent 62%), rgb(8 2 7 / 0.84);
   backdrop-filter: blur(12px) saturate(1.4);
+}
+.threshold-outcome-visual {
+  position: relative;
+  isolation: isolate;
+  display: grid;
+  height: 104px;
+  place-items: center;
+  overflow: hidden;
+  margin: 18px 0 16px;
+  border: 1px solid;
+  border-radius: 14px;
+}
+.threshold-outcome-visual::before,
+.threshold-outcome-visual::after {
+  position: absolute;
+  inset: 0;
+  content: "";
+  pointer-events: none;
+}
+.threshold-outcome-visual::before {
+  z-index: 0;
+  opacity: 0.32;
+  background:
+    linear-gradient(90deg, transparent 49.5%, currentColor 50%, transparent 50.5%),
+    linear-gradient(0deg, transparent 49.5%, currentColor 50%, transparent 50.5%);
+  mask-image: radial-gradient(ellipse, #000 10%, transparent 75%);
+}
+.threshold-outcome-visual::after {
+  z-index: 1;
+  top: 0;
+  bottom: auto;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, currentColor, transparent);
+  opacity: 0.7;
+  animation: threshold-outcome-scan 3.2s ease-in-out infinite;
+}
+.threshold-outcome-visual--profit {
+  border-color: rgb(52 211 153 / 0.4);
+  color: #43f0ae;
+  background:
+    radial-gradient(ellipse at 50% 78%, rgb(16 185 129 / 0.2), transparent 65%),
+    linear-gradient(110deg, #041b1a, #071b1c 52%, #09231b);
+}
+.threshold-outcome-visual--loss {
+  border-color: rgb(251 113 133 / 0.42);
+  color: #fb7185;
+  background:
+    radial-gradient(ellipse at 50% 78%, rgb(244 63 94 / 0.18), transparent 65%),
+    linear-gradient(110deg, #200b18, #1b0a15 52%, #230d16);
+}
+.threshold-outcome-visual--loss::after {
+  animation-direction: reverse;
+}
+.threshold-outcome-orbit {
+  position: absolute;
+  z-index: 1;
+  top: 50%;
+  left: 50%;
+  width: 154px;
+  height: 54px;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  opacity: 0.5;
+  transform: translate(-50%, -50%) rotate(-12deg);
+  animation: threshold-outcome-orbit 8s linear infinite;
+}
+.threshold-outcome-orbit--inner {
+  width: 115px;
+  height: 80px;
+  opacity: 0.25;
+  transform: translate(-50%, -50%) rotate(18deg);
+  animation-direction: reverse;
+  animation-duration: 11s;
+}
+.threshold-outcome-visual--loss .threshold-outcome-orbit {
+  animation-duration: 12s;
+}
+.threshold-outcome-bars {
+  position: absolute;
+  z-index: 1;
+  bottom: 20px;
+  left: 14%;
+  display: flex;
+  width: 72%;
+  height: 38px;
+  align-items: flex-end;
+  gap: 5px;
+  opacity: 0.65;
+  transform: skewX(-17deg);
+}
+.threshold-outcome-bars > span {
+  flex: 1;
+  border: 1px solid currentColor;
+  border-bottom: 0;
+  border-radius: 3px 3px 0 0;
+  background: currentColor;
+  opacity: 0.44;
+  transform-origin: center bottom;
+  animation: threshold-outcome-bar 1.8s ease-in-out infinite alternate;
+}
+.threshold-outcome-bars > span:nth-child(1) { height: 18%; animation-delay: -1.2s; }
+.threshold-outcome-bars > span:nth-child(2) { height: 29%; animation-delay: -0.8s; }
+.threshold-outcome-bars > span:nth-child(3) { height: 42%; animation-delay: -1.5s; }
+.threshold-outcome-bars > span:nth-child(4) { height: 58%; animation-delay: -0.5s; }
+.threshold-outcome-bars > span:nth-child(5) { height: 72%; animation-delay: -1s; }
+.threshold-outcome-bars > span:nth-child(6) { height: 84%; animation-delay: -0.3s; }
+.threshold-outcome-bars > span:nth-child(7) { height: 100%; animation-delay: -1.4s; }
+.threshold-outcome-visual--loss .threshold-outcome-bars > span {
+  transform-origin: center top;
+  animation-name: threshold-outcome-bar-fall;
+}
+.threshold-outcome-visual--loss .threshold-outcome-bars > span:nth-child(1) { height: 100%; }
+.threshold-outcome-visual--loss .threshold-outcome-bars > span:nth-child(2) { height: 84%; }
+.threshold-outcome-visual--loss .threshold-outcome-bars > span:nth-child(3) { height: 72%; }
+.threshold-outcome-visual--loss .threshold-outcome-bars > span:nth-child(4) { height: 58%; }
+.threshold-outcome-visual--loss .threshold-outcome-bars > span:nth-child(5) { height: 42%; }
+.threshold-outcome-visual--loss .threshold-outcome-bars > span:nth-child(6) { height: 29%; }
+.threshold-outcome-visual--loss .threshold-outcome-bars > span:nth-child(7) { height: 18%; }
+.threshold-outcome-direction {
+  z-index: 3;
+  width: 26px;
+  height: 26px;
+  padding: 5px;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  color: inherit;
+  background: #041613;
+  box-shadow: 0 0 14px currentColor;
+}
+.threshold-outcome-visual--loss .threshold-outcome-direction {
+  background: #210d19;
+}
+.threshold-outcome-particles {
+  position: absolute;
+  z-index: 2;
+  inset: 0;
+  pointer-events: none;
+}
+.threshold-outcome-particles > span {
+  position: absolute;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 8px currentColor;
+  animation: threshold-outcome-particle 2.4s ease-in-out infinite;
+}
+.threshold-outcome-particles > span:nth-child(1) { top: 68%; left: 18%; animation-delay: -0.5s; }
+.threshold-outcome-particles > span:nth-child(2) { top: 35%; left: 26%; animation-delay: -1.3s; }
+.threshold-outcome-particles > span:nth-child(3) { top: 74%; left: 37%; animation-delay: -1.8s; }
+.threshold-outcome-particles > span:nth-child(4) { top: 24%; left: 43%; animation-delay: -0.8s; }
+.threshold-outcome-particles > span:nth-child(5) { top: 70%; left: 61%; animation-delay: -1.1s; }
+.threshold-outcome-particles > span:nth-child(6) { top: 31%; left: 70%; animation-delay: -1.6s; }
+.threshold-outcome-particles > span:nth-child(7) { top: 62%; left: 82%; animation-delay: -0.3s; }
+.threshold-outcome-particles > span:nth-child(8) { top: 42%; left: 91%; animation-delay: -2s; }
+.threshold-outcome-visual--loss .threshold-outcome-particles > span {
+  animation-name: threshold-outcome-particle-fall;
+}
+.threshold-outcome-label {
+  position: absolute;
+  z-index: 3;
+  right: 0;
+  bottom: 6px;
+  left: 0;
+  color: inherit;
+  font-size: 8px;
+  font-weight: 900;
+  letter-spacing: 0.24em;
+  text-align: center;
+  text-shadow: 0 0 8px currentColor;
+}
+@media (max-width: 380px) {
+  .threshold-outcome-visual { height: 88px; }
+  .threshold-outcome-bars { bottom: 18px; height: 32px; }
 }
 .market-scanner-card {
   background-image: linear-gradient(155deg, rgb(var(--primary) / 0.14), transparent 62%);
@@ -577,12 +749,12 @@
   50% { opacity: 1; transform: scale(1.2); }
 }
 @keyframes market-scanner-metric-glow {
-  0%, 100% { box-shadow: 0 0 0 rgb(var(--primary) / 0); }
-  50% { box-shadow: 0 0 18px rgb(var(--primary) / 0.1); }
+  0%, 100% { opacity: 0.92; transform: translateY(0); }
+  50% { opacity: 1; transform: translateY(-1px); }
 }
 @keyframes market-scanner-wave {
   0%, 100% { opacity: 0.45; transform: scaleY(0.3); }
-  50% { opacity: 1; transform: scaleY(1); filter: drop-shadow(0 0 5px rgb(var(--primary) / 0.7)); }
+  50% { opacity: 1; transform: scaleY(1); }
 }
 @keyframes scanner-showcase-sheen {
   0%, 18% { transform: translateX(-120%); }
@@ -618,12 +790,12 @@
   72%, 100% { transform: translateX(120%); }
 }
 @keyframes scanner-interval-live {
-  0%, 100% { box-shadow: 0 0 0 rgb(255 190 64 / 0); }
-  50% { box-shadow: 0 0 12px rgb(255 190 64 / 0.42); }
+  0%, 100% { opacity: 0.78; transform: scale(0.98); }
+  50% { opacity: 1; transform: scale(1.02); }
 }
 @keyframes scanner-interval-segment {
-  0%, 100% { filter: brightness(0.82); }
-  50% { filter: brightness(1.35); }
+  0%, 100% { opacity: 0.72; }
+  50% { opacity: 1; }
 }
 .threshold-result-badge {
   animation: threshold-result-glow 2.4s ease-in-out infinite;
@@ -634,39 +806,45 @@
 .threshold-result-badge--loss {
   animation-name: threshold-result-glow-loss;
 }
-.take-profit-celebration {
-  display: flex;
-  justify-content: center;
-  gap: 0.35rem;
-  margin: -0.5rem 0 1rem;
-  font-size: 1.35rem;
-  line-height: 1;
-}
-.take-profit-emoji {
-  display: inline-block;
-  animation: take-profit-emoji-celebrate 1.25s ease-in-out infinite;
-}
-.take-profit-emoji:nth-child(3n + 2) { animation-delay: 160ms; }
-.take-profit-emoji:nth-child(3n) { animation-delay: 320ms; }
-@keyframes take-profit-emoji-celebrate {
-  0%, 100% { transform: translateY(2px) rotate(-8deg) scale(0.92); }
-  50% { transform: translateY(-6px) rotate(8deg) scale(1.12); }
-}
 @keyframes threshold-result-glow {
-  0%, 100% { box-shadow: 0 0 12px rgb(var(--primary) / 0.2); }
-  50% { box-shadow: 0 0 28px rgb(var(--primary) / 0.55); }
+  0%, 100% { opacity: 0.92; transform: scale(0.98); }
+  50% { opacity: 1; transform: scale(1.04); }
 }
 @keyframes threshold-result-glow-profit {
-  0%, 100% { box-shadow: 0 0 12px rgb(16 185 129 / 0.25); }
-  50% { box-shadow: 0 0 30px rgb(16 185 129 / 0.65); }
+  0%, 100% { opacity: 0.88; transform: scale(0.98); }
+  50% { opacity: 1; transform: scale(1.06); }
 }
 @keyframes threshold-result-glow-loss {
-  0%, 100% { box-shadow: 0 0 12px rgb(244 63 94 / 0.25); }
-  50% { box-shadow: 0 0 30px rgb(244 63 94 / 0.65); }
+  0%, 100% { opacity: 0.84; transform: scale(0.99); }
+  50% { opacity: 1; transform: scale(1.03); }
+}
+@keyframes threshold-outcome-scan {
+  0%, 100% { transform: translateY(0); opacity: 0.2; }
+  50% { transform: translateY(100px); opacity: 0.8; }
+}
+@keyframes threshold-outcome-orbit {
+  to { transform: translate(-50%, -50%) rotate(348deg); }
+}
+@keyframes threshold-outcome-bar {
+  to { transform: scaleY(0.58); opacity: 0.24; }
+}
+@keyframes threshold-outcome-bar-fall {
+  to { transform: scaleY(0.48); opacity: 0.22; }
+}
+@keyframes threshold-outcome-particle {
+  0%, 100% { opacity: 0; transform: translateY(10px) scale(0.65); }
+  40%, 70% { opacity: 0.9; transform: translateY(-10px) scale(1); }
+}
+@keyframes threshold-outcome-particle-fall {
+  0%, 100% { opacity: 0; transform: translateY(-10px) scale(0.65); }
+  40%, 70% { opacity: 0.8; transform: translateY(10px) scale(1); }
 }
 @media (prefers-reduced-motion: reduce) {
   .threshold-result-badge { animation: none; }
-  .take-profit-emoji { animation: none; }
+  .threshold-outcome-visual::after,
+  .threshold-outcome-orbit,
+  .threshold-outcome-bars > span,
+  .threshold-outcome-particles > span { animation: none; }
   .market-scanner-card { animation: none; }
   .market-scanner-radar::before,
   .market-scanner-radar::after,

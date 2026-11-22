@@ -398,6 +398,16 @@ export function MarketScannerNotification({
                 </p>
               </div>
             </div>
+            <p
+              className="truncate rounded-lg border border-primary/15 bg-background/50 px-2 py-1 text-[9px] font-medium text-muted-foreground"
+              title={prediction.triggerDescription}
+            >
+              <span className="font-bold uppercase tracking-wider text-primary">
+                {localize('AUTO CONDITION')}
+              </span>
+              {' · '}
+              {prediction.triggerDescription}
+            </p>
             <div className="grid grid-cols-3 gap-1.5">
               <div className="rounded-lg bg-background/60 p-2">
                 <p className="text-[8px] font-bold uppercase tracking-wider text-muted-foreground">

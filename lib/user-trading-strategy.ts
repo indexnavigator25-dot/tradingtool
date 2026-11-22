@@ -405,47 +405,53 @@ export function evaluateUserTradingStrategy(
 
   const pipSize = pipSizeFromPip(symbol.pip_size);
   const digits = predictionPrices.map((price) => getLastDigit(price, pipSize));
-  const minimumTriggerLength = Math.min(...strategy.triggers.map(getTriggerLength));
-  if (digits.length < minimumTriggerLength) return [];
+  const candidates: MarketScanCandidate[] = [];
 
-  return strategy.contractOptions.map((contractOption) => {
-    const matchesTriggers = (context: number[]) =>
-      strategy.triggers.some((trigger) => {
-        const length = getTriggerLength(trigger);
-        return triggerMatches(context.slice(-length), trigger, contractOption);
+  for (const contractOption of strategy.contractOptions) {
+    for (const trigger of strategy.triggers) {
+      const triggerLength = getTriggerLength(trigger);
+      if (digits.length < triggerLength) continue;
+
+      const matchesAt = (endIndex: number) =>
+        triggerMatches(
+          digits.slice(endIndex - triggerLength, endIndex),
+          trigger,
+          contractOption
+        );
+      const ruleMatched = matchesAt(digits.length);
+      const signalOutcomes: boolean[] = [];
+
+      for (let outcomeIndex = triggerLength; outcomeIndex < digits.length; outcomeIndex += 1) {
+        if (!matchesAt(outcomeIndex)) continue;
+        signalOutcomes.push(
+          isWinningDigit(digits[outcomeIndex]!, contractOption.contractMode, contractOption.barrier)
+        );
+      }
+
+      const wins = signalOutcomes.filter(Boolean).length;
+      const predictedWinRate = (wins + 1) / (signalOutcomes.length + 2);
+
+      candidates.push({
+        symbol,
+        contractMode: contractOption.contractMode,
+        barrier: contractOption.barrier,
+        predictionPrices,
+        observedDigits: digits,
+        signalOutcomes,
+        predictedWinRate,
+        estimatedWinRate: signalOutcomes.length > 0
+          ? getWilsonLowerBound(wins, signalOutcomes.length)
+          : predictedWinRate,
+        ruleMatched,
+        sampleCount: predictionPrices.length,
+        triggerMatches: signalOutcomes.length,
+        triggerDescription: trigger.description,
+        expectedReturn: null,
+        scoreFactors: null,
+        weightedScore: null,
       });
-    const ruleMatched = matchesTriggers(digits);
-
-    const signalOutcomes: boolean[] = [];
-    for (let outcomeIndex = minimumTriggerLength; outcomeIndex < digits.length; outcomeIndex += 1) {
-      const context = digits.slice(0, outcomeIndex);
-      if (!matchesTriggers(context)) continue;
-      signalOutcomes.push(
-        isWinningDigit(digits[outcomeIndex]!, contractOption.contractMode, contractOption.barrier)
-      );
     }
+  }
 
-    const wins = signalOutcomes.filter(Boolean).length;
-    const predictedWinRate = (wins + 1) / (signalOutcomes.length + 2);
-
-    return {
-      symbol,
-      contractMode: contractOption.contractMode,
-      barrier: contractOption.barrier,
-      predictionPrices,
-      observedDigits: digits,
-      signalOutcomes,
-      predictedWinRate,
-      estimatedWinRate: signalOutcomes.length > 0
-        ? getWilsonLowerBound(wins, signalOutcomes.length)
-        : predictedWinRate,
-      ruleMatched,
-      sampleCount: predictionPrices.length,
-      triggerMatches: signalOutcomes.length,
-      triggerDescription: strategy.triggers.map((trigger) => trigger.description).join(' or '),
-      expectedReturn: null,
-      scoreFactors: null,
-      weightedScore: null,
-    };
-  });
+  return candidates;
 }
