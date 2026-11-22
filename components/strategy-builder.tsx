@@ -374,10 +374,10 @@ export function SavedBotsPanel({
       )}
       {!isAuthenticated && (
         <p className="text-xs text-muted-foreground">
-          {localize('Log in to run a saved bot.')}
+          {localize('Test mode scans markets only and never places trades. Log in to run a trading bot.')}
         </p>
       )}
-      {isAuthenticated && !isConnected && (
+      {!isConnected && (
         <p className="text-xs text-muted-foreground">
           {localize('Connect to the market before running a bot.')}
         </p>
@@ -400,7 +400,7 @@ export function SavedBotsPanel({
         <ul className="space-y-2">
           {bots.map((bot) => {
             const active = activeBotId === bot.id && status !== 'idle';
-            const canStart = isLoaded && canPersist && isAuthenticated && isConnected &&
+            const canStart = isLoaded && canPersist && isConnected &&
               status === 'idle' && !disabled;
             return (
               <li
@@ -450,8 +450,14 @@ export function SavedBotsPanel({
                   >
                     {active ? <Square /> : <Play />}
                     {active
-                      ? localize(status === 'stopping' ? 'Stopping...' : 'Stop bot')
-                      : localize('Run bot')}
+                      ? localize(
+                          status === 'stopping'
+                            ? 'Stopping...'
+                            : isAuthenticated
+                              ? 'Stop bot'
+                              : 'Stop scan'
+                        )
+                      : localize(isAuthenticated ? 'Run bot' : 'Test scan')}
                   </Button>
                   <Button
                     type="button"

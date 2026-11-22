@@ -29,6 +29,5 @@ export default function DigitsPage() {
     };
   }, []);
 
-  if (config === undefined) return <div className="min-h-dvh bg-background" />;
   return <LiveDigits appConfig={config ?? undefined} />;
 }

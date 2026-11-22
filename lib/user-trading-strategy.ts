@@ -11,9 +11,16 @@ type DigitTrigger =
   | { kind: 'range-run'; range: 'high' | 'low'; length: number; description: string }
   | { kind: 'loss-run'; length: number; description: string };
 
+export interface StrategyContractOption {
+  contractMode: Exclude<ContractMode, 'DIGITMATCH'>;
+  barrier: number | null;
+  contractDescription: string;
+}
+
 export interface UserTradingStrategy {
   contractMode: Exclude<ContractMode, 'DIGITMATCH'>;
   barrier: number | null;
+  contractOptions: StrategyContractOption[];
   triggers: DigitTrigger[];
   description: string;
   contractDescription: string;
@@ -146,36 +153,48 @@ export function compileUserTradingStrategy(description: string): StrategyCompila
 
   const contractText = normalized.slice(0, conditionStart).toLowerCase();
   const conditionText = normalized.slice(conditionStart).toLowerCase();
-  let contractMode: UserTradingStrategy['contractMode'];
-  let barrier: number | null = null;
-  let contractDescription: string;
+  const contractOptions: StrategyContractOption[] = [];
+  const contractPattern =
+    /\b(?:differs?|different)\s+(?:from\s+)?([0-9])\b|\b(?:over|above|greater\s+than)\s+([0-8])\b|\b(?:under|below|less\s+than)\s+([1-9])\b|\b(even|odd)\b/gi;
+  for (const match of contractText.matchAll(contractPattern)) {
+    if (match[1]) {
+      contractOptions.push({
+        contractMode: 'DIGITDIFF',
+        barrier: Number(match[1]),
+        contractDescription: `Differs from ${match[1]}`,
+      });
+    } else if (match[2]) {
+      contractOptions.push({
+        contractMode: 'DIGITOVER',
+        barrier: Number(match[2]),
+        contractDescription: `Over ${match[2]}`,
+      });
+    } else if (match[3]) {
+      contractOptions.push({
+        contractMode: 'DIGITUNDER',
+        barrier: Number(match[3]),
+        contractDescription: `Under ${match[3]}`,
+      });
+    } else if (match[4]) {
+      const contractMode = match[4] === 'even' ? 'DIGITEVEN' : 'DIGITODD';
+      contractOptions.push({
+        contractMode,
+        barrier: null,
+        contractDescription: match[4] === 'even' ? 'Even' : 'Odd',
+      });
+    }
+  }
 
-  const differsMatch = contractText.match(/\b(?:differs?|different)\s+(?:from\s+)?([0-9])\b/);
-  const overMatch = contractText.match(/\b(?:over|above|greater\s+than)\s+([0-8])\b/);
-  const underMatch = contractText.match(/\b(?:under|below|less\s+than)\s+([1-9])\b/);
-  const evenOddMatch = contractText.match(/\b(even|odd)\b/);
-
-  if (differsMatch?.[1]) {
-    contractMode = 'DIGITDIFF';
-    barrier = Number(differsMatch[1]);
-    contractDescription = `Differs from ${barrier}`;
-  } else if (overMatch?.[1]) {
-    contractMode = 'DIGITOVER';
-    barrier = Number(overMatch[1]);
-    contractDescription = `Over ${barrier}`;
-  } else if (underMatch?.[1]) {
-    contractMode = 'DIGITUNDER';
-    barrier = Number(underMatch[1]);
-    contractDescription = `Under ${barrier}`;
-  } else if (evenOddMatch?.[1]) {
-    contractMode = evenOddMatch[1] === 'even' ? 'DIGITEVEN' : 'DIGITODD';
-    contractDescription = evenOddMatch[1] === 'even' ? 'Even' : 'Odd';
-  } else {
+  if (contractOptions.length === 0) {
     return {
       strategy: null,
       error: 'Specify a contract such as “differs from 5”, “over 1”, “under 8”, “even”, or “odd”.',
     };
   }
+  const { contractMode, barrier } = contractOptions[0]!;
+  const contractDescription = contractOptions
+    .map((option) => option.contractDescription)
+    .join(' / ');
 
   const triggerParts = conditionText.split(/\s+(?:and|or)\s+/i);
   const triggers = triggerParts.map(compileTrigger);
@@ -190,6 +209,7 @@ export function compileUserTradingStrategy(description: string): StrategyCompila
     strategy: {
       contractMode,
       barrier,
+      contractOptions,
       triggers: triggers.filter((trigger): trigger is DigitTrigger => trigger !== null),
       description: normalized.replace(/\s+and\s+/gi, ' or '),
       contractDescription,
@@ -214,7 +234,7 @@ function getTriggerLength(trigger: DigitTrigger): number {
 function triggerMatches(
   digits: number[],
   trigger: DigitTrigger,
-  strategy: UserTradingStrategy
+  contractOption: StrategyContractOption
 ): boolean {
   switch (trigger.kind) {
     case 'digit':
@@ -232,14 +252,14 @@ function triggerMatches(
       );
     case 'loss-run':
       return digits.length === trigger.length && digits.every(
-        (digit) => !isWinningDigit(digit, strategy.contractMode, strategy.barrier)
+        (digit) => !isWinningDigit(digit, contractOption.contractMode, contractOption.barrier)
       );
   }
 }
 
 function isWinningDigit(
   digit: number,
-  contractMode: UserTradingStrategy['contractMode'],
+  contractMode: StrategyContractOption['contractMode'],
   barrier: number | null
 ): boolean {
   switch (contractMode) {
@@ -271,48 +291,55 @@ export function evaluateUserTradingStrategy(
   symbol: ActiveSymbol,
   prices: number[],
   strategy: UserTradingStrategy
-): MarketScanCandidate | null {
+): MarketScanCandidate[] {
   const predictionPrices = prices
     .filter(Number.isFinite)
     .slice(-MARKET_SCAN_TICK_COUNT);
-  if (strategy.triggers.length === 0) return null;
+  if (strategy.triggers.length === 0 || strategy.contractOptions.length === 0) return [];
 
   const pipSize = pipSizeFromPip(symbol.pip_size);
   const digits = predictionPrices.map((price) => getLastDigit(price, pipSize));
   const minimumTriggerLength = Math.min(...strategy.triggers.map(getTriggerLength));
-  if (digits.length < minimumTriggerLength) return null;
-  const matchesTriggers = (context: number[]) =>
-    strategy.triggers.some((trigger) => {
-      const length = getTriggerLength(trigger);
-      return triggerMatches(context.slice(-length), trigger, strategy);
-    });
-  const ruleMatched = matchesTriggers(digits);
+  if (digits.length < minimumTriggerLength) return [];
 
-  let triggerMatchesInHistory = 0;
-  let wins = 0;
-  for (let outcomeIndex = minimumTriggerLength; outcomeIndex < digits.length; outcomeIndex += 1) {
-    const context = digits.slice(0, outcomeIndex);
-    if (!matchesTriggers(context)) continue;
-    triggerMatchesInHistory += 1;
-    if (isWinningDigit(digits[outcomeIndex]!, strategy.contractMode, strategy.barrier)) {
-      wins += 1;
+  return strategy.contractOptions.map((contractOption) => {
+    const matchesTriggers = (context: number[]) =>
+      strategy.triggers.some((trigger) => {
+        const length = getTriggerLength(trigger);
+        return triggerMatches(context.slice(-length), trigger, contractOption);
+      });
+    const ruleMatched = matchesTriggers(digits);
+
+    const signalOutcomes: boolean[] = [];
+    for (let outcomeIndex = minimumTriggerLength; outcomeIndex < digits.length; outcomeIndex += 1) {
+      const context = digits.slice(0, outcomeIndex);
+      if (!matchesTriggers(context)) continue;
+      signalOutcomes.push(
+        isWinningDigit(digits[outcomeIndex]!, contractOption.contractMode, contractOption.barrier)
+      );
     }
-  }
 
-  const predictedWinRate = (wins + 1) / (triggerMatchesInHistory + 2);
+    const wins = signalOutcomes.filter(Boolean).length;
+    const predictedWinRate = (wins + 1) / (signalOutcomes.length + 2);
 
-  return {
-    symbol,
-    contractMode: strategy.contractMode,
-    barrier: strategy.barrier,
-    predictionPrices,
-    predictedWinRate,
-    estimatedWinRate: triggerMatchesInHistory > 0
-      ? getWilsonLowerBound(wins, triggerMatchesInHistory)
-      : predictedWinRate,
-    ruleMatched,
-    sampleCount: predictionPrices.length,
-    triggerMatches: triggerMatchesInHistory,
-    triggerDescription: strategy.triggers.map((trigger) => trigger.description).join(' or '),
-  };
+    return {
+      symbol,
+      contractMode: contractOption.contractMode,
+      barrier: contractOption.barrier,
+      predictionPrices,
+      observedDigits: digits,
+      signalOutcomes,
+      predictedWinRate,
+      estimatedWinRate: signalOutcomes.length > 0
+        ? getWilsonLowerBound(wins, signalOutcomes.length)
+        : predictedWinRate,
+      ruleMatched,
+      sampleCount: predictionPrices.length,
+      triggerMatches: signalOutcomes.length,
+      triggerDescription: strategy.triggers.map((trigger) => trigger.description).join(' or '),
+      expectedReturn: null,
+      scoreFactors: null,
+      weightedScore: null,
+    };
+  });
 }

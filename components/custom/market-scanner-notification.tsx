@@ -20,26 +20,37 @@ export function MarketScannerNotification({
   if (!progress) return null;
 
   const isSelected = progress.phase === 'selected';
+  const isPreview = progress.phase === 'preview';
+  const isEvaluating = progress.phase === 'evaluating';
+  const isLiveScanning = progress.phase === 'scanning' || isEvaluating;
   const prediction = progress.prediction;
   const hasSignal = prediction?.ruleMatched ?? false;
+  const resolvedHistoryMarkets =
+    progress.historyLoadedMarkets + progress.historyUnavailableMarkets;
   const progressPercent = progress.totalMarkets > 0
-    ? Math.min(100, (progress.scannedMarkets / progress.totalMarkets) * 100)
+    ? Math.min(100, (resolvedHistoryMarkets / progress.totalMarkets) * 100)
     : 0;
-  const allMarketsLive = progress.totalMarkets > 0 &&
-    progress.scannedMarkets >= progress.totalMarkets;
+  const allHistoriesResolved = progress.totalMarkets > 0 &&
+    resolvedHistoryMarkets >= progress.totalMarkets;
   const statusText = isSelected
-    ? localize('STRATEGY MATCHED')
-    : hasSignal
-      ? localize('ENTRY CONDITION FOUND')
-      : localize('WAITING FOR RULE');
+    ? localize('MARKET SELECTED')
+    : isPreview
+      ? localize('PREVIEW ONLY · NO TRADE')
+    : progress.scanOnly
+      ? localize('TEST MODE · NO TRADES')
+    : isEvaluating
+      ? localize('RANKING ELIGIBLE MARKETS')
+      : hasSignal
+        ? localize('ENTRY CONDITION FOUND')
+        : localize('WAITING FOR RULE');
   const predictionContractLabel = (() => {
     switch (prediction?.contractMode) {
       case 'DIGITDIFF':
         return localize('Differs');
       case 'DIGITOVER':
-        return localize('Over {{barrier}}', { barrier: prediction?.barrier ?? 1 });
+        return localize('Over');
       case 'DIGITUNDER':
-        return localize('Under {{barrier}}', { barrier: prediction?.barrier ?? 8 });
+        return localize('Under');
       case 'DIGITEVEN':
         return localize('Even');
       case 'DIGITODD':
@@ -50,11 +61,25 @@ export function MarketScannerNotification({
   })();
   const description = isSelected
     ? localize('Starting trade')
-    : allMarketsLive
-      ? localize('Watching live ticks')
-      : progress.scannedMarkets > 0
-        ? localize('Waiting for live ticks')
+    : isPreview
+      ? localize('Scan-only mode; no trade was placed')
+    : isEvaluating
+      ? localize('Comparing market scores and payout')
+    : allHistoriesResolved
+      ? localize('Merging live ticks into rolling histories')
+      : progress.historyLoadedMarkets > 0
+        ? localize('Loading historical tick data')
         : localize('Connecting live feeds');
+  const scoreFactors = prediction
+    ? [
+        { label: localize('Historical win rate (25%)'), value: prediction.scoreFactors.historicalWinRate },
+        { label: localize('Recent signal accuracy (20%)'), value: prediction.scoreFactors.recentSignalAccuracy },
+        { label: localize('Edge over random (20%)'), value: prediction.scoreFactors.statisticalEdge },
+        { label: localize('Result consistency (15%)'), value: prediction.scoreFactors.consistency },
+        { label: localize('Market suitability (10%)'), value: prediction.scoreFactors.marketSuitability },
+        { label: localize('Drawdown stability (10%)'), value: prediction.scoreFactors.drawdownStability },
+      ]
+    : [];
 
   return (
     <section
@@ -64,7 +89,7 @@ export function MarketScannerNotification({
         <div className="flex items-start justify-between gap-3">
           <div className="flex min-w-0 items-center gap-3">
             <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-primary/35 bg-primary/10 text-primary">
-              {isSelected ? (
+              {isSelected || isPreview ? (
                 <CheckCircle2 className="h-6 w-6" />
               ) : (
                 <Radar className="market-scan-spinner h-6 w-6" />
@@ -79,15 +104,26 @@ export function MarketScannerNotification({
               </p>
             </div>
           </div>
-          <span className="shrink-0 rounded-full border border-primary/25 bg-primary/10 px-2 py-1 text-[10px] font-bold tabular-nums text-primary">
-            {localize('Scan {{number}}', { number: progress.scanNumber })}
-          </span>
+          <div className="flex shrink-0 items-center gap-2">
+            {isLiveScanning && (
+              <span className="inline-flex items-center gap-1.5 text-[9px] font-bold tracking-wider text-emerald-500">
+                <span className="relative inline-flex h-2 w-2" aria-hidden="true">
+                  <span className="absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75 motion-safe:animate-ping motion-reduce:animate-none" />
+                  <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
+                </span>
+                {localize('LIVE FEED')}
+              </span>
+            )}
+            <span className="rounded-full border border-primary/25 bg-primary/10 px-2 py-1 text-[10px] font-bold tabular-nums text-primary">
+              {localize('Scan {{number}}', { number: progress.scanNumber })}
+            </span>
+          </div>
         </div>
 
         <div className="mt-4 flex items-center gap-3">
           <div
             role="status"
-            aria-label={localize('{{percent}} percent of markets live', {
+            aria-label={localize('{{percent}} percent of market histories resolved', {
               percent: Math.round(progressPercent),
             })}
             className="flex h-[4.25rem] w-[4.25rem] shrink-0 flex-col items-center justify-center rounded-full border-2 border-primary/45 bg-primary/5 shadow-[0_0_20px_rgb(var(--primary)/0.16)]"
@@ -111,35 +147,65 @@ export function MarketScannerNotification({
               <span aria-live="polite" aria-atomic="true">{description}</span>
             </div>
             <p className="mt-1 text-[11px] text-muted-foreground">
-              {localize('{{scanned}} of {{total}} open continuous index markets sending live ticks', {
-                scanned: progress.scannedMarkets,
+              {localize('{{loaded}} of {{total}} market histories loaded (up to 1,000 ticks each)', {
+                loaded: progress.historyLoadedMarkets,
                 total: progress.totalMarkets,
               })}
             </p>
             {progress.unavailableMarkets > 0 && (
               <p className="mt-1 text-[11px] font-medium text-amber-600 dark:text-amber-400">
-                {localize('{{count}} markets could not stream live ticks', {
+                {localize('{{count}} markets could not provide live tick updates', {
                   count: progress.unavailableMarkets,
+                })}
+              </p>
+            )}
+            {progress.historyUnavailableMarkets > 0 && (
+              <p className="mt-1 text-[11px] font-medium text-amber-600 dark:text-amber-400">
+                {localize('{{count}} histories could not be loaded; live ticks are used where available.', {
+                  count: progress.historyUnavailableMarkets,
+                })}
+              </p>
+            )}
+            {progress.negativeExpectedReturnCandidates > 0 && (
+              <p className="mt-1 text-[11px] font-medium text-amber-600 dark:text-amber-400">
+                {localize('{{count}} candidates rejected for negative expected return', {
+                  count: progress.negativeExpectedReturnCandidates,
+                })}
+              </p>
+            )}
+            {isEvaluating && (
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                {localize('{{evaluated}} evaluated · {{eligible}} eligible candidates', {
+                  evaluated: progress.evaluatedCandidates,
+                  eligible: progress.eligibleCandidates,
                 })}
               </p>
             )}
             <p className="mt-1 break-words text-[11px] leading-relaxed text-muted-foreground">
               {localize('Bot rule: {{rule}}', { rule: progress.ruleDescription })}
             </p>
-            {progress.skippedUnfavorableMarkets > 0 && (
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              {localize('Each market uses a rolling 1,000-tick history with live updates. After analysis, one market and one contract direction are selected for each trade.')}
+            </p>
+            {progress.scanOnly && (
+              <p className="mt-1 text-[11px] font-semibold text-primary">
+                {localize('Test mode is read-only. Log in and start a new bot session to trade.')}
+              </p>
+            )}
+            {progress.skippedUnfavorableCandidates > 0 && (
               <p className="mt-1 text-[11px] font-medium text-amber-600 dark:text-amber-400">
                 {localize('{{count}} unfavorable setups skipped', {
-                  count: progress.skippedUnfavorableMarkets,
+                  count: progress.skippedUnfavorableCandidates,
                 })}
               </p>
             )}
             <div
               className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted"
               role="progressbar"
-              aria-label={localize('Live markets')}
+              aria-label={localize('Market histories')}
               aria-valuemin={0}
               aria-valuemax={Math.max(1, progress.totalMarkets)}
-              aria-valuenow={progress.scannedMarkets}
+              aria-valuenow={resolvedHistoryMarkets}
             >
               <div
                 className="h-full rounded-full bg-primary transition-[width] duration-300 ease-out"
@@ -154,36 +220,47 @@ export function MarketScannerNotification({
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <p className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground">
-                  {localize(
-                    prediction.ruleMatched
-                      ? 'Rule match from scan {{number}}'
-                      : 'Best live candidate from scan {{number}}',
-                    {
-                      number: prediction.scanNumber,
-                    }
-                  )}
+                  {localize(isSelected
+                    ? 'Market selected after analysis'
+                    : 'Best candidate after analysis')}
                 </p>
                 <p className="truncate text-sm font-bold" title={prediction.market}>
-                  {prediction.market} · {predictionContractLabel}
+                  {progress.selectedMarket ?? prediction.market} · {predictionContractLabel}
                   {prediction.barrier !== null ? ` ${prediction.barrier}` : ''}
                 </p>
               </div>
               <div className="shrink-0 text-right">
                 <p className="font-mono text-sm font-bold text-primary">
-                  {(prediction.estimatedWinRate * 100).toFixed(1)}%
+                  {prediction.weightedScore.toFixed(1)}
                 </p>
                 <p className="text-[9px] font-medium text-muted-foreground">
-                  {localize('Recent fit')}
+                  {localize('Weighted score / 100')}
                 </p>
               </div>
+            </div>
+            <p className="text-[10px] font-medium text-muted-foreground">
+              {localize('Expected return: {{amount}} USD per trade', {
+                amount: prediction.expectedReturn.toFixed(2),
+              })}
+            </p>
+            <div className="grid grid-cols-2 gap-x-3 gap-y-1 border-t border-border/70 pt-2 sm:grid-cols-3">
+              {scoreFactors.map(({ label, value }) => (
+                <div key={label} className="flex items-center justify-between gap-1 text-[9px] text-muted-foreground">
+                  <span>{label}</span>
+                  <span className="font-mono font-semibold text-foreground">
+                    {(value * 100).toFixed(0)}%
+                  </span>
+                </div>
+              ))}
             </div>
             <p className="border-t border-border/70 pt-2 text-[11px] text-muted-foreground">
               {localize('Entry: {{condition}}', { condition: prediction.triggerDescription })}
             </p>
             <div className="mt-1 flex flex-wrap items-center justify-between gap-x-2 gap-y-1 text-[9px] text-muted-foreground">
               <span>
-                {localize('{{count}} matches in live sample', {
+                {localize('{{count}} historical signal outcomes from {{ticks}} ticks', {
                   count: prediction.triggerMatches,
+                  ticks: prediction.sampleCount,
                 })}
               </span>
               <span className={prediction.ruleMatched ? 'text-emerald-500' : 'text-amber-500'}>
@@ -195,7 +272,9 @@ export function MarketScannerNotification({
           </div>
         ) : (
           <div className="mt-3 rounded-xl border border-border bg-muted/30 px-3 py-2 text-[11px] text-muted-foreground">
-            {localize('Waiting for this bot rule to match on an open market.')}
+            {isEvaluating
+              ? localize('Evaluating all market and contract directions before selecting one.')
+              : localize('Waiting for enough live history to analyze each direction.')}
           </div>
         )}
 

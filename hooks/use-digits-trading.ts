@@ -14,6 +14,7 @@ import type {
   DurationLimits,
   BuyResult,
   ProposalResponse,
+  TicksHistoryResponse,
 } from '@deriv/core';
 import { toast } from 'sonner';
 import { useBaseTrading } from '@/hooks/use-base-trading';
@@ -23,9 +24,13 @@ import {
   chooseBestScanCandidate,
   getContractBarrier,
   getScannableMarkets,
+  MARKET_SCAN_TIMEOUT_MS,
   MARKET_SCAN_TICK_COUNT,
+  rankMarketScanCandidates,
+  scoreMarketCandidate,
 } from '../lib/market-scanner';
 import type { MarketScanCandidate } from '../lib/market-scanner';
+import type { ScoredMarketScanCandidate } from '../lib/market-scanner';
 import { evaluateUserTradingStrategy } from '../lib/user-trading-strategy';
 import type { SavedBotSettings, UserTradingStrategy } from '../lib/user-trading-strategy';
 import { getNextMartingaleStake, initialMartingaleProgress } from '../lib/martingale';
@@ -45,17 +50,22 @@ const CONNECTION_POLL_INTERVAL_MS = 250;
 const CONNECTION_LOST = Symbol('connection-lost');
 
 export interface AutoTradingScanProgress {
-  phase: 'connecting' | 'scanning' | 'selected';
-  scannedMarkets: number;
+  phase: 'connecting' | 'scanning' | 'evaluating' | 'preview' | 'selected';
+  scanOnly: boolean;
+  historyLoadedMarkets: number;
   totalMarkets: number;
   unavailableMarkets: number;
+  historyUnavailableMarkets: number;
+  evaluatedCandidates: number;
+  eligibleCandidates: number;
+  negativeExpectedReturnCandidates: number;
   scanNumber: number;
   ruleDescription: string;
   selectedMarket: string | null;
   selectedContractMode: Exclude<ContractMode, 'DIGITMATCH'> | null;
   estimatedWinRate: number | null;
   prediction: AutoTradingPrediction | null;
-  skippedUnfavorableMarkets: number;
+  skippedUnfavorableCandidates: number;
 }
 
 export interface AutoTradingScheduleProgress {
@@ -77,21 +87,43 @@ export interface AutoTradingPrediction {
   triggerMatches: number;
   triggerDescription: string;
   ruleMatched: boolean;
+  expectedReturn: number;
+  weightedScore: number;
+  scoreFactors: NonNullable<MarketScanCandidate['scoreFactors']>;
 }
 
 type MarketScanProgressCallback = (
-  liveMarkets: number,
+  historyLoadedMarkets: number,
   totalMarkets: number,
-  unavailableMarkets: number
+  unavailableMarkets: number,
+  historyUnavailableMarkets: number
 ) => void;
-type MarketScanCandidateCallback = (candidate: MarketScanCandidate) => void;
+interface MarketScanResult {
+  candidates: MarketScanCandidate[];
+  historyLoadedMarkets: number;
+  unavailableMarkets: number;
+  historyUnavailableMarkets: number;
+}
+interface MarketHistoryCacheEntry {
+  prices: number[];
+  lastEpoch: number | null;
+  lastQuote: number | null;
+  historicalSeeded: boolean;
+  retryAfter: number;
+  lastUpdatedAt: number;
+}
+interface MarketHistoryRequestScheduler {
+  nextRequestAt: number;
+  rateLimitedUntil: number;
+}
+
 type ActiveTickSubscriber = (
   symbol: string,
   handler: (tick: Tick) => void
 ) => (() => void) | null;
 
 function getCandidatePrediction(
-  candidate: MarketScanCandidate,
+  candidate: ScoredMarketScanCandidate,
   scanNumber: number
 ): AutoTradingPrediction {
   return {
@@ -105,11 +137,18 @@ function getCandidatePrediction(
     triggerMatches: candidate.triggerMatches,
     triggerDescription: candidate.triggerDescription,
     ruleMatched: candidate.ruleMatched,
+    expectedReturn: candidate.expectedReturn,
+    weightedScore: candidate.weightedScore,
+    scoreFactors: candidate.scoreFactors,
   };
 }
 
-function getScanCandidateKey(symbol: string, contractMode: ContractMode): string {
-  return `${symbol}:${contractMode}`;
+function getScanCandidateKey(
+  symbol: string,
+  contractMode: ContractMode,
+  barrier: number | null
+): string {
+  return `${symbol}:${contractMode}:${barrier ?? ''}`;
 }
 
 function isNoReturnContractError(error: unknown): boolean {
@@ -127,10 +166,10 @@ async function scanMarkets(
   strategy: UserTradingStrategy,
   shouldStop: () => boolean,
   subscribeToActiveTicks: ActiveTickSubscriber,
-  isCandidateRejected: (candidate: MarketScanCandidate) => boolean,
-  onCandidatePreview: MarketScanCandidateCallback,
+  historyCache: Map<string, MarketHistoryCacheEntry>,
+  historyRequestScheduler: MarketHistoryRequestScheduler,
   onProgress: MarketScanProgressCallback
-): Promise<MarketScanCandidate | null | typeof CONNECTION_LOST> {
+): Promise<MarketScanResult | null | typeof CONNECTION_LOST> {
   const openSymbols = Array.from(
     new Map(
       getScannableMarkets(symbols).map((symbol) => [symbol.underlying_symbol, symbol])
@@ -139,40 +178,278 @@ async function scanMarkets(
   if (openSymbols.length === 0) {
     throw new Error('No open, unsuspended continuous indices are available to scan.');
   }
+  const triggerLengths = strategy.triggers.map((trigger) => {
+    switch (trigger.kind) {
+      case 'digit':
+        return 1;
+      case 'sequence':
+        return trigger.digits.length;
+      default:
+        return trigger.length;
+    }
+  });
+  const minimumTriggerLength = triggerLengths.length > 0
+    ? Math.min(...triggerLengths)
+    : 1;
   const pricesBySymbol = new Map<string, number[]>();
   const lastTickBySymbol = new Map<string, string>();
-  const marketsWithTicks = new Set<string>();
+  const pendingTicksBySymbol = new Map<string, Tick[]>();
+  const historyTailBySymbol = new Map<string, { epoch: number | null; quote: number | null }>();
 
   return new Promise((resolve, reject) => {
     let finished = false;
     let availableFeeds = 0;
-    let unavailableMarkets = 0;
+    const unavailableSymbols = new Set<string>();
+    const historyResolvedSymbols = new Set<string>();
+    const historyLoadedSymbols = new Set<string>();
+    const historyUnavailableSymbols = new Set<string>();
+    const liveUpdatedSymbols = new Set<string>();
     let settledSubscriptions = 0;
     let pendingSubscriptions = 0;
     let pollForStop: ReturnType<typeof setInterval> | null = null;
+    let scanTimeout: ReturnType<typeof setTimeout> | null = null;
     let removeConnectionListener = () => {};
+    let lastProgressKey = '';
     const activeUnsubscribers = new Set<() => void>();
     const streamUnsubscribers = new Set<() => Promise<void>>();
-    const subscriptionTasksBySymbol = new Map<string, Promise<void>>();
 
-    const finish = (result: MarketScanCandidate | null | typeof CONNECTION_LOST, error?: Error) => {
+    const getScanResult = (): MarketScanResult => {
+      const candidates: MarketScanCandidate[] = [];
+      for (const symbol of openSymbols) {
+        const symbolCode = symbol.underlying_symbol;
+        if (
+          unavailableSymbols.has(symbolCode) ||
+          !historyResolvedSymbols.has(symbolCode) ||
+          !liveUpdatedSymbols.has(symbolCode)
+        ) continue;
+        candidates.push(
+          ...evaluateUserTradingStrategy(
+            symbol,
+            pricesBySymbol.get(symbolCode) ?? [],
+            strategy
+          ).filter((candidate) => candidate.ruleMatched)
+        );
+      }
+
+      return {
+        candidates,
+        historyLoadedMarkets: historyLoadedSymbols.size,
+        unavailableMarkets: unavailableSymbols.size,
+        historyUnavailableMarkets: historyUnavailableSymbols.size,
+      };
+    };
+
+    const reportProgress = () => {
+      const progressKey =
+        `${historyLoadedSymbols.size}:${unavailableSymbols.size}:${historyUnavailableSymbols.size}`;
+      if (progressKey === lastProgressKey) return;
+      lastProgressKey = progressKey;
+      onProgress(
+        historyLoadedSymbols.size,
+        openSymbols.length,
+        unavailableSymbols.size,
+        historyUnavailableSymbols.size
+      );
+    };
+
+    const finish = (result: MarketScanResult | null | typeof CONNECTION_LOST, error?: Error) => {
       if (finished) return;
       finished = true;
       if (pollForStop) clearInterval(pollForStop);
+      if (scanTimeout) clearTimeout(scanTimeout);
       removeConnectionListener();
       activeUnsubscribers.forEach((unsubscribe) => unsubscribe());
       activeUnsubscribers.clear();
 
       void (async () => {
-        if (result && result !== CONNECTION_LOST) {
-          await subscriptionTasksBySymbol.get(result.symbol.underlying_symbol);
-        }
         await Promise.all(
           Array.from(streamUnsubscribers, (unsubscribe) => unsubscribe())
         );
         if (error) reject(error);
         else resolve(result);
       })();
+    };
+
+    const appendLiveTick = (symbolCode: string, tick: Tick) => {
+      const historyTail = historyTailBySymbol.get(symbolCode);
+      if (
+        historyTail &&
+        historyTail.epoch !== null &&
+        (
+          tick.epoch < historyTail.epoch ||
+          (tick.epoch === historyTail.epoch && tick.quote === historyTail.quote)
+        )
+      ) {
+        return false;
+      }
+
+      const prices = pricesBySymbol.get(symbolCode) ?? [];
+      prices.push(tick.quote);
+      if (prices.length > MARKET_SCAN_TICK_COUNT) {
+        prices.splice(0, prices.length - MARKET_SCAN_TICK_COUNT);
+      }
+      pricesBySymbol.set(symbolCode, prices);
+      liveUpdatedSymbols.add(symbolCode);
+      const cachedHistory = historyCache.get(symbolCode);
+      historyCache.set(symbolCode, {
+        prices,
+        lastEpoch: tick.epoch,
+        lastQuote: tick.quote,
+        historicalSeeded: cachedHistory?.historicalSeeded ?? false,
+        retryAfter: cachedHistory?.retryAfter ?? 0,
+        lastUpdatedAt: Date.now(),
+      });
+      return true;
+    };
+
+    const waitForHistoryRequestSlot = async (intervalMs: number) => {
+      const waitMs = Math.max(0, historyRequestScheduler.nextRequestAt - Date.now());
+      if (waitMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, waitMs));
+      }
+      if (finished || shouldStop()) return false;
+      historyRequestScheduler.nextRequestAt = Date.now() + intervalMs;
+      return true;
+    };
+
+    const initializeHistory = (
+      symbolCode: string,
+      prices: number[],
+      times: number[],
+      mode: 'full' | 'incremental' | 'cached',
+      retryAfter = 0
+    ) => {
+      if (finished || historyResolvedSymbols.has(symbolCode)) return;
+      const cachedHistory = historyCache.get(symbolCode);
+      let historyPrices = mode === 'full'
+        ? prices.filter(Number.isFinite).slice(-MARKET_SCAN_TICK_COUNT)
+        : [...(cachedHistory?.prices ?? [])];
+      let lastHistoryEpoch = mode === 'full'
+        ? (() => {
+            const historyTimes = times.filter(Number.isFinite);
+            return historyTimes[historyTimes.length - 1] ?? null;
+          })()
+        : cachedHistory?.lastEpoch ?? null;
+      let lastHistoryQuote = historyPrices[historyPrices.length - 1] ?? null;
+
+      if (mode === 'incremental') {
+        const historyTimes = times.filter(Number.isFinite);
+        const historyValues = prices.filter(Number.isFinite);
+        const updateCount = Math.min(historyTimes.length, historyValues.length);
+        for (let index = 0; index < updateCount; index += 1) {
+          const epoch = historyTimes[index]!;
+          const quote = historyValues[index]!;
+          if (
+            lastHistoryEpoch !== null &&
+            (
+              epoch < lastHistoryEpoch ||
+              (epoch === lastHistoryEpoch && quote === lastHistoryQuote)
+            )
+          ) {
+            continue;
+          }
+          historyPrices.push(quote);
+          if (historyPrices.length > MARKET_SCAN_TICK_COUNT) {
+            historyPrices.splice(0, historyPrices.length - MARKET_SCAN_TICK_COUNT);
+          }
+          lastHistoryEpoch = epoch;
+          lastHistoryQuote = quote;
+        }
+      } else if (mode === 'full') {
+        lastHistoryQuote = historyPrices[historyPrices.length - 1] ?? null;
+      }
+
+      const historicalSeeded = mode === 'full'
+        ? historyPrices.length > 0
+        : cachedHistory?.historicalSeeded ?? false;
+      historyTailBySymbol.set(symbolCode, {
+        epoch: lastHistoryEpoch,
+        quote: lastHistoryQuote,
+      });
+      pricesBySymbol.set(symbolCode, historyPrices);
+      historyCache.set(symbolCode, {
+        prices: historyPrices,
+        lastEpoch: lastHistoryEpoch,
+        lastQuote: lastHistoryQuote,
+        historicalSeeded,
+        retryAfter: retryAfter || cachedHistory?.retryAfter || 0,
+        lastUpdatedAt: mode === 'cached'
+          ? cachedHistory?.lastUpdatedAt ?? Date.now()
+          : Date.now(),
+      });
+      historyResolvedSymbols.add(symbolCode);
+      if (historicalSeeded) historyLoadedSymbols.add(symbolCode);
+      else historyUnavailableSymbols.add(symbolCode);
+
+      const pendingTicks = pendingTicksBySymbol.get(symbolCode) ?? [];
+      pendingTicksBySymbol.delete(symbolCode);
+      pendingTicks.sort((left, right) => left.epoch - right.epoch);
+      pendingTicks.forEach((tick) => appendLiveTick(symbolCode, tick));
+      reportProgress();
+      checkScanCompletion();
+    };
+
+    const loadHistory = async (symbolCode: string) => {
+      const cachedHistory = historyCache.get(symbolCode);
+      if (cachedHistory?.historicalSeeded && cachedHistory.lastEpoch === null) {
+        initializeHistory(symbolCode, [], [], 'cached');
+        return;
+      }
+      if (cachedHistory?.retryAfter && cachedHistory.retryAfter > Date.now()) {
+        initializeHistory(symbolCode, [], [], 'cached', cachedHistory.retryAfter);
+        return;
+      }
+      if (historyRequestScheduler.rateLimitedUntil > Date.now()) {
+        initializeHistory(symbolCode, [], [], 'cached', historyRequestScheduler.rateLimitedUntil);
+        return;
+      }
+      if (
+        cachedHistory?.historicalSeeded &&
+        Date.now() - cachedHistory.lastUpdatedAt < 3_000
+      ) {
+        initializeHistory(symbolCode, [], [], 'cached');
+        return;
+      }
+      const incremental = cachedHistory?.historicalSeeded === true;
+      try {
+        const intervalMs = incremental ? 250 : 1000;
+        if (!await waitForHistoryRequestSlot(intervalMs)) return;
+        const response = await ws.send<TicksHistoryResponse>({
+          ticks_history: symbolCode,
+          end: 'latest',
+          ...(incremental
+            ? { start: (cachedHistory.lastEpoch ?? 0) + 1 }
+            : { start: 1, count: MARKET_SCAN_TICK_COUNT }),
+          style: 'ticks',
+        });
+        if (
+          !response.history ||
+          !Array.isArray(response.history.prices) ||
+          !Array.isArray(response.history.times)
+        ) {
+          throw new Error('The market history response did not contain tick prices and times.');
+        }
+        initializeHistory(
+          symbolCode,
+          response.history.prices,
+          response.history.times,
+          incremental ? 'incremental' : 'full'
+        );
+      } catch (error) {
+        if (finished) return;
+        const fallbackCache = historyCache.get(symbolCode);
+        const isRateLimited = isDerivApiError(error) &&
+          /rate.?limit|ticks_history_expensive/i.test(error.code);
+        const retryAfter = Date.now() + (fallbackCache?.historicalSeeded ? 5_000 : 15_000);
+        if (isRateLimited) {
+          historyRequestScheduler.rateLimitedUntil = retryAfter;
+        }
+        console.warn('[strategy bot] Could not refresh historical ticks; continuing with cached or live ticks.', {
+          symbol: symbolCode,
+          error,
+        });
+        initializeHistory(symbolCode, [], [], 'cached', retryAfter);
+      }
     };
 
     const handleTick = (symbolCode: string, tick: Tick) => {
@@ -187,32 +464,16 @@ async function scanMarkets(
       if (lastTickBySymbol.get(symbolCode) === tickKey) return;
       lastTickBySymbol.set(symbolCode, tickKey);
 
-      const prices = pricesBySymbol.get(symbolCode) ?? [];
-      prices.push(tick.quote);
-      if (prices.length > MARKET_SCAN_TICK_COUNT) {
-        prices.splice(0, prices.length - MARKET_SCAN_TICK_COUNT);
+      if (!historyResolvedSymbols.has(symbolCode)) {
+        const pendingTicks = pendingTicksBySymbol.get(symbolCode) ?? [];
+        pendingTicks.push(tick);
+        if (pendingTicks.length > MARKET_SCAN_TICK_COUNT) pendingTicks.shift();
+        pendingTicksBySymbol.set(symbolCode, pendingTicks);
+        return;
       }
-      pricesBySymbol.set(symbolCode, prices);
-
-      if (!marketsWithTicks.has(symbolCode)) {
-        marketsWithTicks.add(symbolCode);
-        onProgress(marketsWithTicks.size, openSymbols.length, unavailableMarkets);
-      }
-
-      const candidates = openSymbols.flatMap((symbol) => {
-        const marketPrices = pricesBySymbol.get(symbol.underlying_symbol);
-        if (!marketPrices) return [];
-        const candidate = evaluateUserTradingStrategy(symbol, marketPrices, strategy);
-        return candidate ? [candidate] : [];
-      });
-      const bestPreview = chooseBestScanCandidate(candidates);
-      if (bestPreview) onCandidatePreview(bestPreview);
-      const bestEligibleCandidate = chooseBestScanCandidate(
-        candidates.filter(
-          (candidate) => candidate.ruleMatched && !isCandidateRejected(candidate)
-        )
-      );
-      if (bestEligibleCandidate) finish(bestEligibleCandidate);
+      appendLiveTick(symbolCode, tick);
+      reportProgress();
+      checkScanCompletion();
     };
 
     const activeSymbols = new Set<string>();
@@ -228,6 +489,15 @@ async function scanMarkets(
     }
 
     pendingSubscriptions = openSymbols.length - activeSymbols.size;
+    const isMarketReady = (symbol: ActiveSymbol) => {
+      const symbolCode = symbol.underlying_symbol;
+      return unavailableSymbols.has(symbolCode) ||
+        (
+          historyResolvedSymbols.has(symbolCode) &&
+          liveUpdatedSymbols.has(symbolCode) &&
+          (pricesBySymbol.get(symbolCode)?.length ?? 0) >= minimumTriggerLength
+        );
+    };
     const checkSubscriptionSetup = () => {
       if (
         !finished &&
@@ -247,20 +517,48 @@ async function scanMarkets(
       }
     };
 
+    const checkScanCompletion = () => {
+      if (
+        !finished &&
+        availableFeeds > 0 &&
+        openSymbols.every(isMarketReady)
+      ) {
+        finish(getScanResult());
+      }
+    };
+
     pollForStop = setInterval(() => {
       if (shouldStop()) finish(null);
     }, CONNECTION_POLL_INTERVAL_MS);
+    scanTimeout = setTimeout(() => {
+      if (!finished) {
+        if (availableFeeds === 0) {
+          finish(
+            null,
+            new Error('The scanner could not subscribe to live ticks for any open continuous index.')
+          );
+        } else {
+          for (const symbol of openSymbols) {
+            const symbolCode = symbol.underlying_symbol;
+            if (!historyResolvedSymbols.has(symbolCode)) {
+              historyUnavailableSymbols.add(symbolCode);
+            }
+            if (!liveUpdatedSymbols.has(symbolCode)) {
+              unavailableSymbols.add(symbolCode);
+            }
+          }
+          reportProgress();
+          finish(getScanResult());
+        }
+      }
+    }, MARKET_SCAN_TIMEOUT_MS);
     removeConnectionListener = ws.onConnectionStateChange((connected) => {
       if (!connected) finish(CONNECTION_LOST);
     });
 
-    if (pendingSubscriptions === 0) {
-      checkSubscriptionSetup();
-    }
-
     for (const symbol of openSymbols) {
       if (finished || activeSymbols.has(symbol.underlying_symbol)) continue;
-      const task = ws.subscribe(
+      void ws.subscribe(
         { ticks: symbol.underlying_symbol },
         (data) => {
           const tick = data.tick as Tick | undefined;
@@ -273,20 +571,32 @@ async function scanMarkets(
         }
         streamUnsubscribers.add(subscription.unsubscribe);
         availableFeeds += 1;
+        checkScanCompletion();
       }).catch((error: unknown) => {
-        unavailableMarkets += 1;
+        unavailableSymbols.add(symbol.underlying_symbol);
         console.warn('[strategy bot] Could not start a live tick feed.', {
           symbol: symbol.underlying_symbol,
           error,
         });
         if (!finished) {
-          onProgress(marketsWithTicks.size, openSymbols.length, unavailableMarkets);
+          reportProgress();
+          checkScanCompletion();
         }
       }).finally(() => {
         settledSubscriptions += 1;
         checkSubscriptionSetup();
       });
-      subscriptionTasksBySymbol.set(symbol.underlying_symbol, task);
+    }
+
+    void (async () => {
+      for (const symbol of openSymbols) {
+        if (finished || shouldStop()) return;
+        await loadHistory(symbol.underlying_symbol);
+      }
+    })();
+
+    if (pendingSubscriptions === 0) {
+      checkSubscriptionSetup();
     }
   });
 }
@@ -512,7 +822,8 @@ export function useDigitsTrading({
     pipSize: number;
     prices: number[];
   } | null>(null);
-  const autoSessionRef = useRef<{ stopRequested: boolean } | null>(null);
+  const autoSessionRef = useRef<{ stopRequested: boolean; scanOnly: boolean } | null>(null);
+  const isAuthenticatedRef = useRef(isAuthenticated);
   const autoSessionStatsRef = useRef({ profit: 0, tradeCount: 0, generation: 0 });
   const selectSymbolRef = useRef(selectSymbol);
   const activeSymbolRef = useRef(activeSymbol);
@@ -585,6 +896,14 @@ export function useDigitsTrading({
     setAutoTradingScanProgress(null);
     setAutoTradingStatus('stopping');
   }, []);
+
+  useEffect(() => {
+    isAuthenticatedRef.current = isAuthenticated;
+    const activeSession = autoSessionRef.current;
+    if (!isAuthenticated && activeSession && !activeSession.scanOnly) {
+      stopAutoTrading();
+    }
+  }, [isAuthenticated, stopAutoTrading]);
 
   // Reset contract mode to the first option of the selected trade type
   const setTradeType = useCallback((type: TradeType) => {
@@ -712,6 +1031,7 @@ export function useDigitsTrading({
     let stopLossTarget: number | null;
     const parsedTradesPerMinute = Number(tradesPerMinute);
     const parsedRunDurationHours = Number(runDurationHours);
+    const scanOnly = !isAuthenticated;
     const baseStake = Number(settings.stake ?? stake);
     const maximumStake = settings.maximumStake === undefined
       ? null
@@ -723,7 +1043,7 @@ export function useDigitsTrading({
     try {
       takeProfitTarget = parseTarget(settings.takeProfit ?? takeProfit, localize('Take profit'));
       stopLossTarget = parseTarget(settings.stopLoss ?? stopLoss, localize('Stop loss'));
-      if (takeProfitTarget === null && stopLossTarget === null) {
+      if (!scanOnly && takeProfitTarget === null && stopLossTarget === null) {
         throw new Error(localize('Set a take-profit or stop-loss target before starting the strategy bot.'));
       }
       if (!Number.isFinite(baseStake) || baseStake <= 0) {
@@ -757,8 +1077,8 @@ export function useDigitsTrading({
           max: AUTO_TRADING_SCHEDULE_LIMITS.maxDurationHours,
         }));
       }
-      if (!tradingWs?.isConnected || !tradingIsConnected || !isAuthenticated) {
-        throw new Error(localize('Log in and connect before starting an automatic trading session.'));
+      if (!tradingWs?.isConnected || !tradingIsConnected) {
+        throw new Error(localize('Connect to the live market before starting a scanner session.'));
       }
       if (symbols.length === 0) throw new Error(localize('No markets are available to scan.'));
     } catch (error) {
@@ -768,7 +1088,7 @@ export function useDigitsTrading({
       return;
     }
 
-    const session = { stopRequested: false };
+    const session = { stopRequested: false, scanOnly };
     // Keep minute limits aligned to this session's start time.
     const scheduleStartedAt = Date.now();
     const scheduleDeadlineAt = scheduleStartedAt + parsedRunDurationHours * 60 * 60 * 1000;
@@ -799,6 +1119,31 @@ export function useDigitsTrading({
     let reachedThreshold: AutoTradingThresholdResult | null = null;
     const rejectedCandidates = new Map<string, number>();
     const skippedUnfavorableCandidates = new Set<string>();
+    const marketHistoryCache = new Map<string, MarketHistoryCacheEntry>();
+    const historyRequestScheduler: MarketHistoryRequestScheduler = {
+      nextRequestAt: 0,
+      rateLimitedUntil: 0,
+    };
+    if (activeSymbol && prices.length > 0) {
+      const activePrices = prices.filter(Number.isFinite).slice(-MARKET_SCAN_TICK_COUNT);
+      if (
+        currentTick?.symbol === activeSymbol.underlying_symbol &&
+        activePrices[activePrices.length - 1] !== currentTick.quote
+      ) {
+        activePrices.push(currentTick.quote);
+        if (activePrices.length > MARKET_SCAN_TICK_COUNT) activePrices.shift();
+      }
+      marketHistoryCache.set(activeSymbol.underlying_symbol, {
+        prices: activePrices,
+        lastEpoch: currentTick?.symbol === activeSymbol.underlying_symbol
+          ? currentTick.epoch
+          : null,
+        lastQuote: activePrices[activePrices.length - 1] ?? null,
+        historicalSeeded: activePrices.length >= MARKET_SCAN_TICK_COUNT,
+        retryAfter: 0,
+        lastUpdatedAt: Date.now(),
+      });
+    }
     let scanNumber = 0;
     let minuteWindowIndex = 0;
     const tradesByMinute = new Map<number, number>();
@@ -854,7 +1199,7 @@ export function useDigitsTrading({
       return false;
     };
 
-    const scanForMarket = async (): Promise<MarketScanCandidate | null> => {
+    const scanForMarket = async (): Promise<ScoredMarketScanCandidate | null> => {
       setAutoTradingStatus('scanning');
       setAutoTradingMarket(null);
       setAutoTradingEstimatedWinRate(null);
@@ -877,53 +1222,40 @@ export function useDigitsTrading({
         const totalMarkets = eligibleMarkets.length;
         setAutoTradingScanProgress({
           phase: 'scanning',
-          scannedMarkets: 0,
+          scanOnly,
+          historyLoadedMarkets: 0,
           totalMarkets,
           unavailableMarkets: 0,
+          historyUnavailableMarkets: 0,
+          evaluatedCandidates: 0,
+          eligibleCandidates: 0,
+          negativeExpectedReturnCandidates: 0,
           scanNumber,
           ruleDescription: strategy.description,
           selectedMarket: null,
           selectedContractMode: null,
           estimatedWinRate: null,
           prediction: null,
-          skippedUnfavorableMarkets: skippedUnfavorableCandidates.size,
+          skippedUnfavorableCandidates: skippedUnfavorableCandidates.size,
         });
 
-        const candidate = await scanMarkets(
+        const scanResult = await scanMarkets(
           tradingWs,
           eligibleMarkets,
           strategy,
           () => session.stopRequested || Date.now() >= scheduleDeadlineAt,
           subscribeToActiveTicks,
-          (rejectedCandidate) => {
-            const key = getScanCandidateKey(
-              rejectedCandidate.symbol.underlying_symbol,
-              rejectedCandidate.contractMode
-            );
-            const rejectedUntil = rejectedCandidates.get(key);
-            if (rejectedUntil === undefined) return false;
-            if (rejectedUntil <= Date.now()) {
-              rejectedCandidates.delete(key);
-              return false;
-            }
-            return true;
-          },
-          (candidatePreview) => {
-            const prediction = getCandidatePrediction(candidatePreview, scanNumber);
-            setAutoTradingScanProgress((progress) =>
-              progress?.phase === 'scanning'
-                ? { ...progress, prediction }
-                : progress
-            );
-          },
-          (scannedMarkets, marketCount, unavailableMarkets) => {
+          marketHistoryCache,
+          historyRequestScheduler,
+          (historyLoadedMarkets, marketCount, unavailableMarkets, historyUnavailableMarkets) => {
             setAutoTradingScanProgress((progress) =>
               progress?.phase === 'scanning'
                 ? {
                     ...progress,
-                    scannedMarkets,
+                    historyLoadedMarkets,
                     totalMarkets: marketCount,
                     unavailableMarkets,
+                    historyUnavailableMarkets,
                   }
                 : progress
             );
@@ -931,21 +1263,134 @@ export function useDigitsTrading({
         );
         if (session.stopRequested) return null;
         if (Date.now() >= scheduleDeadlineAt) return null;
-        if (candidate === CONNECTION_LOST) continue;
-        if (!candidate) return null;
+        if (scanResult === CONNECTION_LOST) continue;
+        if (!scanResult) continue;
 
-        const prediction = getCandidatePrediction(candidate, scanNumber);
         setAutoTradingScanProgress((progress) =>
           progress?.phase === 'scanning'
-            ? { ...progress, prediction }
+            ? {
+                ...progress,
+                phase: 'evaluating',
+                historyLoadedMarkets: scanResult.historyLoadedMarkets,
+                unavailableMarkets: scanResult.unavailableMarkets,
+                historyUnavailableMarkets: scanResult.historyUnavailableMarkets,
+              }
             : progress
         );
-        return candidate;
+
+        const candidatesToEvaluate = scanResult.candidates.filter((candidate) => {
+          if (!candidate.ruleMatched) return false;
+          const key = getScanCandidateKey(
+            candidate.symbol.underlying_symbol,
+            candidate.contractMode,
+            candidate.barrier
+          );
+          const rejectedUntil = rejectedCandidates.get(key);
+          if (rejectedUntil === undefined) return true;
+          if (rejectedUntil <= Date.now()) {
+            rejectedCandidates.delete(key);
+            return true;
+          }
+          return false;
+        });
+        const scoredCandidates: MarketScanCandidate[] = [];
+        let evaluatedCandidates = 0;
+        let negativeExpectedReturnCandidates = 0;
+        let shouldRescanAfterReconnect = false;
+
+        for (const candidate of candidatesToEvaluate) {
+          if (session.stopRequested || Date.now() >= scheduleDeadlineAt) return null;
+          const barrier = candidate.barrier ?? undefined;
+          const proposalParams = {
+            proposal: 1,
+            amount: nextStake,
+            basis: 'stake',
+            contract_type: candidate.contractMode,
+            currency: 'USD',
+            underlying_symbol: candidate.symbol.underlying_symbol,
+            duration: tradeDuration,
+            duration_unit: 't',
+            ...(barrier !== undefined ? { barrier } : {}),
+          };
+          let proposalResponse: ProposalResponse | null = null;
+          let connectionDropped = false;
+          const removeConnectionListener = tradingWs.onConnectionStateChange((connected) => {
+            if (!connected) connectionDropped = true;
+          });
+          try {
+            proposalResponse = await tradingWs.send<ProposalResponse>(proposalParams);
+          } catch (error) {
+            if (session.stopRequested) return null;
+            if (isNoReturnContractError(error)) {
+              skipUnfavorableCandidate(candidate);
+            } else if (!connectionDropped && tradingWs.isConnected) {
+              throw error;
+            } else {
+              const reconnected = await waitForConnection(
+                tradingWs,
+                Math.min(Date.now() + CONTRACT_SETTLEMENT_TIMEOUT_MS, scheduleDeadlineAt),
+                () => session.stopRequested || Date.now() >= scheduleDeadlineAt
+              );
+              if (!reconnected) return null;
+              shouldRescanAfterReconnect = true;
+            }
+          } finally {
+            removeConnectionListener();
+          }
+
+          if (shouldRescanAfterReconnect) break;
+          evaluatedCandidates += 1;
+          if (!proposalResponse) {
+            setAutoTradingScanProgress((progress) =>
+              progress?.phase === 'evaluating'
+                ? { ...progress, evaluatedCandidates }
+                : progress
+            );
+            continue;
+          }
+
+          const quote = proposalResponse.proposal;
+          if (!quote?.id || !Number.isFinite(quote.ask_price) || quote.ask_price <= 0) {
+            throw new Error(localize('Could not get a valid proposal for the next trade.'));
+          }
+          if (!Number.isFinite(quote.payout) || quote.payout <= 0) {
+            throw new Error(localize('The proposal did not include a valid potential payout.'));
+          }
+          const scoredCandidate = scoreMarketCandidate(candidate, {
+            askPrice: quote.ask_price,
+            payout: quote.payout,
+          });
+          if (!scoredCandidate) {
+            throw new Error(localize('The scanner could not score a valid market proposal.'));
+          }
+          if (scoredCandidate.expectedReturn < 0) {
+            negativeExpectedReturnCandidates += 1;
+            skipUnfavorableCandidate(candidate);
+          } else {
+            scoredCandidates.push(scoredCandidate);
+          }
+
+          const eligibleCandidates = rankMarketScanCandidates(scoredCandidates);
+          setAutoTradingScanProgress((progress) =>
+            progress?.phase === 'evaluating'
+              ? {
+                  ...progress,
+                  evaluatedCandidates,
+                  eligibleCandidates: eligibleCandidates.length,
+                  negativeExpectedReturnCandidates,
+                }
+              : progress
+          );
+        }
+
+        if (shouldRescanAfterReconnect) continue;
+        const bestCandidate = chooseBestScanCandidate(scoredCandidates);
+        if (bestCandidate) return bestCandidate;
       }
       return null;
     };
 
-    const useScannedMarket = (candidate: MarketScanCandidate) => {
+    const useScannedMarket = (candidate: ScoredMarketScanCandidate) => {
       const prediction = getCandidatePrediction(
         candidate,
         scanNumber
@@ -991,7 +1436,8 @@ export function useDigitsTrading({
     const skipUnfavorableCandidate = (candidate: MarketScanCandidate) => {
       const candidateKey = getScanCandidateKey(
         candidate.symbol.underlying_symbol,
-        candidate.contractMode
+        candidate.contractMode,
+        candidate.barrier
       );
       rejectedCandidates.set(candidateKey, Date.now() + 5000);
       skippedUnfavorableCandidates.add(candidateKey);
@@ -1000,7 +1446,7 @@ export function useDigitsTrading({
         progress
           ? {
               ...progress,
-              skippedUnfavorableMarkets: skippedUnfavorableCandidates.size,
+              skippedUnfavorableCandidates: skippedUnfavorableCandidates.size,
             }
           : progress
       );
@@ -1013,7 +1459,31 @@ export function useDigitsTrading({
         const candidate = await scanForMarket();
         if (!candidate) break;
         if (Date.now() >= scheduleDeadlineAt) break;
-        useScannedMarket(candidate);
+        if (!scanOnly && !isAuthenticatedRef.current) {
+          session.stopRequested = true;
+          break;
+        }
+        if (scanOnly) {
+          const marketName =
+            candidate.symbol.underlying_symbol_name || candidate.symbol.underlying_symbol;
+          setAutoTradingMarket(marketName);
+          setAutoTradingEstimatedWinRate(candidate.estimatedWinRate);
+          setAutoTradingScanProgress((progress) =>
+            progress
+              ? {
+                  ...progress,
+                  phase: 'preview',
+                  selectedMarket: marketName,
+                  selectedContractMode: candidate.contractMode,
+                  estimatedWinRate: candidate.estimatedWinRate,
+                  prediction: getCandidatePrediction(candidate, scanNumber),
+                }
+              : progress
+          );
+          await new Promise((resolve) => setTimeout(resolve, 3000));
+          if (session.stopRequested) break;
+          continue;
+        }
         const market = candidate.symbol;
 
         const connected = await waitForConnection(
@@ -1066,13 +1536,21 @@ export function useDigitsTrading({
         if (!quote?.id || !Number.isFinite(quote.ask_price) || quote.ask_price <= 0) {
           throw new Error(localize('Could not get a valid proposal for the next trade.'));
         }
-        if (!Number.isFinite(quote.payout)) {
+        if (!Number.isFinite(quote.payout) || quote.payout <= 0) {
           throw new Error(localize('The proposal did not include a valid potential payout.'));
         }
-        if (quote.payout <= quote.ask_price) {
+        const refreshedCandidate = scoreMarketCandidate(candidate, {
+          askPrice: quote.ask_price,
+          payout: quote.payout,
+        });
+        if (!refreshedCandidate) {
+          throw new Error(localize('The scanner could not score a valid market proposal.'));
+        }
+        if (refreshedCandidate.expectedReturn < 0) {
           skipUnfavorableCandidate(candidate);
           continue;
         }
+        useScannedMarket(refreshedCandidate);
         const hasPurchaseSlot = await waitForScheduledSlot();
         if (!hasPurchaseSlot) break;
         if (!tradingWs.isConnected) {
@@ -1085,6 +1563,11 @@ export function useDigitsTrading({
             break;
           }
           continue;
+        }
+
+        if (!isAuthenticatedRef.current) {
+          session.stopRequested = true;
+          break;
         }
 
         let connectionDroppedDuringPurchase = false;

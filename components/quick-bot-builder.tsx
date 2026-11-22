@@ -8,7 +8,11 @@ import { Label } from '@/components/ui/label';
 import { useAppTranslations } from '@/components/custom/i18n-provider';
 import { compileUserTradingStrategy } from '@/lib/user-trading-strategy';
 import { TRADING_DEFAULTS } from '@/lib/trading-defaults';
-import type { SavedBotSettings, UserTradingStrategy } from '@/lib/user-trading-strategy';
+import type {
+  SavedBotSettings,
+  StrategyContractOption,
+  UserTradingStrategy,
+} from '@/lib/user-trading-strategy';
 import type { ContractMode } from '@/lib/types';
 import type { BotBuilderTemplate, SavedBot } from './strategy-builder';
 
@@ -171,6 +175,7 @@ export function QuickBotBuilder({
   const [contractMode, setContractMode] =
     useState<Exclude<ContractMode, 'DIGITMATCH'>>('DIGITOVER');
   const [barrier, setBarrier] = useState('1');
+  const [contractOptions, setContractOptions] = useState<StrategyContractOption[] | null>(null);
   const [durationDraft, setDurationDraft] = useState(String(duration));
   const [maximumStake, setMaximumStake] = useState('10');
   const [recoveryEnabled, setRecoveryEnabled] = useState(false);
@@ -204,6 +209,9 @@ export function QuickBotBuilder({
     setNextConditionId(nextConditions.length + 1);
     setContractMode(result.strategy.contractMode);
     setBarrier(String(result.strategy.barrier ?? 1));
+    setContractOptions(
+      result.strategy.contractOptions.length > 1 ? result.strategy.contractOptions : null
+    );
     setSavedNotice(localize('Strategy loaded from Strategies. Edit its conditions, then save the bot.'));
     onTemplateApplied();
   }, [localize, onTemplateApplied, previewBot, template]);
@@ -232,6 +240,9 @@ export function QuickBotBuilder({
     setNextConditionId(nextConditions.length + 1);
     setContractMode(result.strategy.contractMode);
     setBarrier(String(result.strategy.barrier ?? 1));
+    setContractOptions(
+      result.strategy.contractOptions.length > 1 ? result.strategy.contractOptions : null
+    );
     setMaximumStake(previewBot.maximumStake ?? '10');
     setRecoveryEnabled(previewBot.recoveryEnabled ?? false);
     onStakeChange(previewBot.stake ?? TRADING_DEFAULTS.stake);
@@ -254,10 +265,17 @@ export function QuickBotBuilder({
   ]);
 
   const description = useMemo(() => {
-    const contract = contractDescription(contractMode, barrier);
+    const contract = contractOptions
+      ? contractOptions
+          .map((option) => contractDescription(
+            option.contractMode,
+            String(option.barrier ?? 1)
+          ))
+          .join(' or ')
+      : contractDescription(contractMode, barrier);
     const entries = conditions.map(conditionDescription);
     return `${contract} ${entries.join(' or ')}`;
-  }, [barrier, conditions, contractMode]);
+  }, [barrier, conditions, contractMode, contractOptions]);
   const compilation = useMemo(
     () => compileUserTradingStrategy(description),
     [description]
@@ -285,6 +303,7 @@ export function QuickBotBuilder({
     setNextConditionId(2);
     setContractMode('DIGITOVER');
     setBarrier('1');
+    setContractOptions(null);
     setMaximumStake('10');
     setRecoveryEnabled(false);
     setDurationDraft(String(TRADING_DEFAULTS.duration));
@@ -607,7 +626,9 @@ export function QuickBotBuilder({
                       disabled={disabled}
                     />
                     <p className="text-[10px] leading-relaxed text-muted-foreground">
-                      {localize('Losses use this bot’s contract and barrier.')}
+                      {localize(contractOptions
+                        ? 'Losses are evaluated separately for each direction in this group.'
+                        : 'Losses use this bot’s contract and barrier.')}
                     </p>
                   </div>
                 )}
@@ -653,54 +674,75 @@ export function QuickBotBuilder({
 
             <div className="space-y-3 rounded-lg border border-primary/20 bg-primary/[0.04] p-3 sm:p-4">
               <h5 className="text-xs font-semibold text-foreground">{localize('Then trade')}</h5>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div className="space-y-1.5">
-                  <Label htmlFor="quick-bot-contract">{localize('Contract')}</Label>
-                  <select
-                    id="quick-bot-contract"
-                    value={contractMode}
-                    onChange={(event) => {
-                      const nextMode = event.target.value as Exclude<ContractMode, 'DIGITMATCH'>;
-                      setContractMode(nextMode);
-                      setBarrier((current) => {
-                        const parsed = Number(current);
-                        return current.trim() === '' || !Number.isFinite(parsed)
-                          ? current
-                          : String(normalizeBarrier(nextMode, parsed));
-                      });
-                      setSaveError(null);
-                      setSavedNotice(null);
-                    }}
-                    disabled={disabled}
-                    className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
-                  >
-                    <option value="DIGITDIFF">{localize('Differs')}</option>
-                    <option value="DIGITOVER">{localize('Over')}</option>
-                    <option value="DIGITUNDER">{localize('Under')}</option>
-                    <option value="DIGITEVEN">{localize('Even')}</option>
-                    <option value="DIGITODD">{localize('Odd')}</option>
-                  </select>
+              {contractOptions ? (
+                <div className="space-y-2">
+                  <Label>{localize('Directions in this group')}</Label>
+                  <div className="flex flex-wrap gap-2">
+                    {contractOptions.map((option) => (
+                      <span
+                        key={`${option.contractMode}:${option.barrier ?? ''}`}
+                        className="rounded-full border border-border/80 bg-background px-2.5 py-1 text-xs font-medium text-foreground"
+                      >
+                        {localize(option.contractDescription)}
+                      </span>
+                    ))}
+                  </div>
+                  <p className="text-[10px] leading-relaxed text-muted-foreground">
+                    {localize('The scanner compares every direction in this group across eligible markets and selects the best candidate.')}
+                  </p>
                 </div>
-                {(contractMode === 'DIGITDIFF' || contractMode === 'DIGITOVER' || contractMode === 'DIGITUNDER') && (
+              ) : (
+                <div className="grid gap-3 sm:grid-cols-2">
                   <div className="space-y-1.5">
-                    <Label htmlFor="quick-bot-barrier">{localize('Digit barrier')}</Label>
-                    <Input
-                      id="quick-bot-barrier"
-                      type="number"
-                      min={contractMode === 'DIGITUNDER' ? 1 : 0}
-                      max={contractMode === 'DIGITOVER' ? 8 : 9}
-                      step="1"
-                      value={barrier}
+                    <Label htmlFor="quick-bot-contract">{localize('Contract')}</Label>
+                    <select
+                      id="quick-bot-contract"
+                      value={contractMode}
                       onChange={(event) => {
-                        setBarrier(event.target.value);
+                        const nextMode = event.target.value as Exclude<ContractMode, 'DIGITMATCH'>;
+                        setContractMode(nextMode);
+                        setContractOptions(null);
+                        setBarrier((current) => {
+                          const parsed = Number(current);
+                          return current.trim() === '' || !Number.isFinite(parsed)
+                            ? current
+                            : String(normalizeBarrier(nextMode, parsed));
+                        });
                         setSaveError(null);
                         setSavedNotice(null);
                       }}
                       disabled={disabled}
-                    />
+                      className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
+                    >
+                      <option value="DIGITDIFF">{localize('Differs')}</option>
+                      <option value="DIGITOVER">{localize('Over')}</option>
+                      <option value="DIGITUNDER">{localize('Under')}</option>
+                      <option value="DIGITEVEN">{localize('Even')}</option>
+                      <option value="DIGITODD">{localize('Odd')}</option>
+                    </select>
                   </div>
-                )}
-              </div>
+                  {(contractMode === 'DIGITDIFF' || contractMode === 'DIGITOVER' || contractMode === 'DIGITUNDER') && (
+                    <div className="space-y-1.5">
+                      <Label htmlFor="quick-bot-barrier">{localize('Digit barrier')}</Label>
+                      <Input
+                        id="quick-bot-barrier"
+                        type="number"
+                        min={contractMode === 'DIGITUNDER' ? 1 : 0}
+                        max={contractMode === 'DIGITOVER' ? 8 : 9}
+                        step="1"
+                        value={barrier}
+                        onChange={(event) => {
+                          setBarrier(event.target.value);
+                          setContractOptions(null);
+                          setSaveError(null);
+                          setSavedNotice(null);
+                        }}
+                        disabled={disabled}
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         </div>

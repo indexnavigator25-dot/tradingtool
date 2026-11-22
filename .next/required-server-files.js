@@ -103,7 +103,10 @@ self.__SERVER_FILES_MANIFEST={
         "transform": "lodash/{{member}}"
       }
     },
-    "outputFileTracingRoot": "C:\\factorpulse\\tradingtool",
+    "outputFileTracingRoot": "C:\\pulse\\tradingtool",
+    "allowedDevOrigins": [
+      "127.0.0.1"
+    ],
     "enablePrerenderSourceMaps": true,
     "cacheComponents": false,
     "cacheLife": {
@@ -335,13 +338,13 @@ self.__SERVER_FILES_MANIFEST={
     "transpilePackages": [
       "@deriv/core"
     ],
-    "repoRoot": "C:\\factorpulse\\tradingtool",
+    "repoRoot": "C:\\pulse\\tradingtool",
     "turbopack": {
-      "root": "C:\\factorpulse\\tradingtool"
+      "root": "C:\\pulse\\tradingtool"
     },
     "distDirRoot": ".next"
   },
-  "appDir": "C:\\factorpulse\\tradingtool",
+  "appDir": "C:\\pulse\\tradingtool",
   "relativeAppDir": "",
   "files": [
     ".next\\package.json",
