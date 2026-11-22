@@ -1,6 +1,6 @@
 'use client';
 
-import { Activity, CheckCircle2, Radar } from 'lucide-react';
+import { CheckCircle2, Radar } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useAppTranslations } from '@/components/custom/i18n-provider';
 import type { AutoTradingScanProgress } from '@/hooks/use-digits-trading';
@@ -30,8 +30,6 @@ export function MarketScannerNotification({
   const progressPercent = progress.totalMarkets > 0
     ? Math.min(100, (resolvedHistoryMarkets / progress.totalMarkets) * 100)
     : 0;
-  const allHistoriesResolved = progress.totalMarkets > 0 &&
-    resolvedHistoryMarkets >= progress.totalMarkets;
   const statusText = isSelected
     ? localize('MARKET SELECTED')
     : isPreview
@@ -59,25 +57,17 @@ export function MarketScannerNotification({
         return null;
     }
   })();
-  const description = isSelected
-    ? localize('Starting trade')
-    : isPreview
-      ? localize('Scan-only mode; no trade was placed')
-    : isEvaluating
-      ? localize('Comparing market scores and payout')
-    : allHistoriesResolved
-      ? localize('Merging live ticks into rolling histories')
-      : progress.historyLoadedMarkets > 0
-        ? localize('Loading historical tick data')
-        : localize('Connecting live feeds');
+  const candidatePercent = progress.evaluatedCandidates > 0
+    ? Math.min(100, (progress.eligibleCandidates / progress.evaluatedCandidates) * 100)
+    : 0;
   const scoreFactors = prediction?.scoreFactors
     ? [
-        { label: localize('Historical win rate (25%)'), value: prediction.scoreFactors.historicalWinRate },
-        { label: localize('Recent signal accuracy (20%)'), value: prediction.scoreFactors.recentSignalAccuracy },
-        { label: localize('Edge over random (20%)'), value: prediction.scoreFactors.statisticalEdge },
-        { label: localize('Result consistency (15%)'), value: prediction.scoreFactors.consistency },
-        { label: localize('Market suitability (10%)'), value: prediction.scoreFactors.marketSuitability },
-        { label: localize('Drawdown stability (10%)'), value: prediction.scoreFactors.drawdownStability },
+        { label: localize('Win rate'), value: prediction.scoreFactors.historicalWinRate },
+        { label: localize('Recent'), value: prediction.scoreFactors.recentSignalAccuracy },
+        { label: localize('Edge'), value: prediction.scoreFactors.statisticalEdge },
+        { label: localize('Consistency'), value: prediction.scoreFactors.consistency },
+        { label: localize('Market'), value: prediction.scoreFactors.marketSuitability },
+        { label: localize('Stability'), value: prediction.scoreFactors.drawdownStability },
       ]
     : [];
 
@@ -120,7 +110,7 @@ export function MarketScannerNotification({
           </div>
         </div>
 
-        <div className="mt-4 flex items-center gap-3">
+        <div className="mt-4 grid grid-cols-[4.25rem_1fr] gap-3">
           <div
             role="status"
             aria-label={localize('{{percent}} percent of market histories resolved', {
@@ -141,94 +131,84 @@ export function MarketScannerNotification({
               </span>
             )}
           </div>
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-1.5 text-xs font-bold text-foreground">
-              {!isSelected && <Activity className="h-3.5 w-3.5 text-primary" />}
-              <span aria-live="polite" aria-atomic="true">{description}</span>
-            </div>
-            <p className="mt-1 text-[11px] text-muted-foreground">
-              {localize('{{loaded}} of {{total}} market histories loaded (up to 1,000 ticks each)', {
-                loaded: progress.historyLoadedMarkets,
-                total: progress.totalMarkets,
-              })}
-            </p>
-            {progress.unavailableMarkets > 0 && (
-              <p className="mt-1 text-[11px] font-medium text-amber-600 dark:text-amber-400">
-                {localize('{{count}} markets could not provide live tick updates', {
-                  count: progress.unavailableMarkets,
-                })}
-              </p>
-            )}
-            {progress.historyUnavailableMarkets > 0 && (
-              <p className="mt-1 text-[11px] font-medium text-amber-600 dark:text-amber-400">
-                {localize('{{count}} histories could not be loaded; live ticks are used where available.', {
-                  count: progress.historyUnavailableMarkets,
-                })}
-              </p>
-            )}
-            {isEvaluating && (
-              <p className="mt-1 text-[11px] text-muted-foreground">
-                {localize('{{evaluated}} evaluated · {{eligible}} eligible candidates', {
-                  evaluated: progress.evaluatedCandidates,
-                  eligible: progress.eligibleCandidates,
-                })}
-              </p>
-            )}
-            <p className="mt-1 break-words text-[11px] leading-relaxed text-muted-foreground">
-              {localize('Bot rule: {{rule}}', { rule: progress.ruleDescription })}
-            </p>
-            {progress.recoveryActive && !progress.recoveryTerminal && progress.activeGroup && (
-              <p className="mt-1 text-[11px] font-semibold text-amber-600 dark:text-amber-400">
-                {localize('Recovery transition: Group {{group}} after a loss from Group {{baseGroup}} requires a matched entry, 10+ historical signals, at least 10% edge, and positive live expected return.', {
-                  group: progress.activeGroup,
-                  baseGroup: progress.baseGroup,
-                })}
-              </p>
-            )}
-            {progress.recoveryTerminal && (
-              <p className="mt-1 text-[11px] font-semibold text-amber-600 dark:text-amber-400">
-                {localize('Recovery is locked in Group C; it stays there and keeps the high-confidence entry filter.')}
-              </p>
-            )}
-            <p className="mt-1 text-[11px] text-muted-foreground">
-              {localize('Each scan ranks all configured contracts across eligible markets within 15 seconds; recovery waits for high-confidence setups.')}
-            </p>
-            {progress.scanOnly && (
-              <p className="mt-1 text-[11px] font-semibold text-primary">
-                {localize('Test mode is read-only. Log in and start a new bot session to trade.')}
-              </p>
-            )}
-            {progress.skippedUnfavorableCandidates > 0 && (
-              <p className="mt-1 text-[11px] font-medium text-amber-600 dark:text-amber-400">
-                {localize('{{count}} unfavorable setups skipped', {
-                  count: progress.skippedUnfavorableCandidates,
-                })}
-              </p>
-            )}
-            <div
-              className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted"
-              role="progressbar"
-              aria-label={localize('Market histories')}
-              aria-valuemin={0}
-              aria-valuemax={Math.max(1, progress.totalMarkets)}
-              aria-valuenow={resolvedHistoryMarkets}
-            >
+          <div className="grid min-w-0 grid-cols-3 gap-1.5">
+            {[
+              {
+                label: localize('Markets'),
+                value: `${progress.historyLoadedMarkets}/${progress.totalMarkets}`,
+                detail: localize('HISTORY'),
+                percent: progressPercent,
+              },
+              {
+                label: localize('Candidates'),
+                value: `${progress.eligibleCandidates}/${progress.evaluatedCandidates}`,
+                detail: localize('ELIGIBLE'),
+                percent: candidatePercent,
+              },
+              {
+                label: localize('Signals'),
+                value: String(prediction?.triggerMatches ?? 0),
+                detail: `${prediction?.sampleCount ?? 0} ${localize('TICKS')}`,
+                percent: prediction && prediction.sampleCount > 0
+                  ? Math.min(100, (prediction.triggerMatches / prediction.sampleCount) * 100)
+                  : 0,
+              },
+            ].map((metric) => (
               <div
-                className="h-full rounded-full bg-primary transition-[width] duration-300 ease-out"
-                style={{ width: `${progressPercent}%` }}
-              />
-            </div>
+                key={metric.label}
+                className="min-w-0 rounded-lg border border-border/70 bg-background/70 p-2"
+              >
+                <p className="truncate text-[9px] font-bold uppercase tracking-wider text-muted-foreground">
+                  {metric.label}
+                </p>
+                <p className="mt-1 truncate font-mono text-sm font-bold tabular-nums text-foreground transition-all duration-300">
+                  {metric.value}
+                </p>
+                <p className="truncate text-[8px] font-semibold tracking-wider text-muted-foreground">
+                  {metric.detail}
+                </p>
+                <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-muted">
+                  <div
+                    className="h-full rounded-full bg-primary transition-[width] duration-500 ease-out"
+                    style={{ width: `${metric.percent}%` }}
+                  />
+                </div>
+              </div>
+            ))}
           </div>
         </div>
+        {(progress.recoveryActive || progress.unavailableMarkets > 0 ||
+          progress.historyUnavailableMarkets > 0 || progress.skippedUnfavorableCandidates > 0) && (
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {progress.recoveryActive && progress.activeGroup && (
+              <span className="rounded-full bg-amber-500/10 px-2 py-1 text-[9px] font-bold text-amber-600 dark:text-amber-400">
+                {localize('RECOVERY {{group}}', { group: progress.activeGroup })}
+              </span>
+            )}
+            {progress.unavailableMarkets > 0 && (
+              <span className="rounded-full bg-amber-500/10 px-2 py-1 text-[9px] font-bold text-amber-600 dark:text-amber-400">
+                {localize('LIVE GAP {{count}}', { count: progress.unavailableMarkets })}
+              </span>
+            )}
+            {progress.historyUnavailableMarkets > 0 && (
+              <span className="rounded-full bg-amber-500/10 px-2 py-1 text-[9px] font-bold text-amber-600 dark:text-amber-400">
+                {localize('HISTORY GAP {{count}}', { count: progress.historyUnavailableMarkets })}
+              </span>
+            )}
+            {progress.skippedUnfavorableCandidates > 0 && (
+              <span className="rounded-full bg-amber-500/10 px-2 py-1 text-[9px] font-bold text-amber-600 dark:text-amber-400">
+                {localize('SKIPPED {{count}}', { count: progress.skippedUnfavorableCandidates })}
+              </span>
+            )}
+          </div>
+        )}
 
         {prediction ? (
           <div className="mt-3 space-y-2 rounded-xl border border-primary/25 bg-primary/5 px-3 py-2.5">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <p className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground">
-                  {localize(isSelected
-                    ? 'Market selected after analysis'
-                    : 'Best candidate after analysis')}
+                  {localize(isSelected ? 'SELECTED' : 'TOP PICK')}
                 </p>
                 <p className="truncate text-sm font-bold" title={prediction.market}>
                   {progress.selectedMarket ?? prediction.market} · {predictionContractLabel}
@@ -240,63 +220,82 @@ export function MarketScannerNotification({
                   {prediction.weightedScore?.toFixed(1) ?? '—'}
                 </p>
                 <p className="text-[9px] font-medium text-muted-foreground">
-                  {localize('Weighted score / 100')}
+                  {localize('SCORE / 100')}
                 </p>
               </div>
             </div>
-            {prediction.expectedReturn !== null ? (
-              <p className="text-[10px] font-medium text-muted-foreground">
-                {localize('Expected return: {{amount}} USD per trade', {
-                  amount: prediction.expectedReturn.toFixed(2),
-                })}
-              </p>
-            ) : (
-              <p className="text-[10px] font-medium text-muted-foreground">
-                {localize('Selected by historical score; the live contract quote is checked before purchase.')}
-              </p>
-            )}
-            {!prediction.ruleMatched && (
-              <p className="text-[10px] font-semibold text-amber-600 dark:text-amber-400">
-                {localize('15-second fallback selected this setup before its entry rule matched.')}
-              </p>
-            )}
-            {prediction.expectedReturn !== null && prediction.expectedReturn < 0 && (
-              <p className="text-[10px] font-semibold text-amber-600 dark:text-amber-400">
-                {localize('The best available setup has a negative estimated return.')}
-              </p>
-            )}
-            <div className="grid grid-cols-2 gap-x-3 gap-y-1 border-t border-border/70 pt-2 sm:grid-cols-3">
+            <div className="grid grid-cols-3 gap-1.5">
+              <div className="rounded-lg bg-background/60 p-2">
+                <p className="text-[8px] font-bold uppercase tracking-wider text-muted-foreground">
+                  {localize('WIN RATE')}
+                </p>
+                <p className="font-mono text-xs font-bold tabular-nums">
+                  {(prediction.estimatedWinRate * 100).toFixed(0)}%
+                </p>
+              </div>
+              <div className="rounded-lg bg-background/60 p-2">
+                <p className="text-[8px] font-bold uppercase tracking-wider text-muted-foreground">
+                  {localize('RETURN')}
+                </p>
+                <p className={`font-mono text-xs font-bold tabular-nums ${
+                  prediction.expectedReturn !== null && prediction.expectedReturn < 0
+                    ? 'text-amber-600 dark:text-amber-400'
+                    : 'text-foreground'
+                }`}>
+                  {prediction.expectedReturn === null
+                    ? '—'
+                    : `${prediction.expectedReturn.toFixed(2)} USD`}
+                </p>
+              </div>
+              <div className="rounded-lg bg-background/60 p-2">
+                <p className="text-[8px] font-bold uppercase tracking-wider text-muted-foreground">
+                  {localize('ENTRY')}
+                </p>
+                <p className={`text-xs font-bold ${
+                  prediction.ruleMatched ? 'text-emerald-500' : 'text-amber-500'
+                }`}>
+                  {prediction.ruleMatched ? localize('MATCH') : localize('WAIT')}
+                </p>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3">
               {scoreFactors.map(({ label, value }) => (
-                <div key={label} className="flex items-center justify-between gap-1 text-[9px] text-muted-foreground">
-                  <span>{label}</span>
-                  <span className="font-mono font-semibold text-foreground">
-                    {(value * 100).toFixed(0)}%
-                  </span>
+                <div key={label} className="rounded-lg border border-border/60 bg-background/50 px-2 py-1.5">
+                  <div className="flex items-center justify-between gap-1 text-[8px] text-muted-foreground">
+                    <span>{label}</span>
+                    <span className="font-mono font-semibold text-foreground">
+                      {(value * 100).toFixed(0)}%
+                    </span>
+                  </div>
+                  <div className="mt-1 h-1 overflow-hidden rounded-full bg-muted">
+                    <div
+                      className="h-full rounded-full bg-primary transition-[width] duration-500 ease-out"
+                      style={{ width: `${Math.min(100, Math.max(0, value * 100))}%` }}
+                    />
+                  </div>
                 </div>
               ))}
             </div>
-            <p className="border-t border-border/70 pt-2 text-[11px] text-muted-foreground">
-              {localize('Entry: {{condition}}', { condition: prediction.triggerDescription })}
-            </p>
-            <div className="mt-1 flex flex-wrap items-center justify-between gap-x-2 gap-y-1 text-[9px] text-muted-foreground">
-              <span>
-                {localize('{{count}} historical signal outcomes from {{ticks}} ticks', {
-                  count: prediction.triggerMatches,
-                  ticks: prediction.sampleCount,
-                })}
-              </span>
-              <span className={prediction.ruleMatched ? 'text-emerald-500' : 'text-amber-500'}>
-                {prediction.ruleMatched
-                  ? localize('Rule matched')
-                  : localize('Waiting for rule')}
-              </span>
+            <div className="flex justify-between border-t border-border/70 pt-2 text-[9px] font-semibold text-muted-foreground">
+              <span>{localize('SIGNALS {{count}}', { count: prediction.triggerMatches })}</span>
+              <span>{localize('TICKS {{count}}', { count: prediction.sampleCount })}</span>
             </div>
           </div>
         ) : (
-          <div className="mt-3 rounded-xl border border-border bg-muted/30 px-3 py-2 text-[11px] text-muted-foreground">
-            {isEvaluating
-              ? localize('Evaluating all market and contract directions before selecting one.')
-              : localize('Analyzing rolling history; a market will be selected within 15 seconds.')}
+          <div
+            role="status"
+            aria-label={statusText}
+            className="mt-3 flex h-12 items-end gap-1 rounded-xl border border-border bg-muted/30 px-3 py-2"
+          >
+            {[25, 55, 35, 75, 45, 90, 50, 70, 30, 60, 40, 80].map((height, index) => (
+              <span
+                key={index}
+                className={`flex-1 rounded-t-sm bg-primary/70 transition-all duration-300 ${
+                  isLiveScanning ? 'motion-safe:animate-pulse' : 'opacity-40'
+                }`}
+                style={{ height: `${height}%`, animationDelay: `${index * 45}ms` }}
+              />
+            ))}
           </div>
         )}
 

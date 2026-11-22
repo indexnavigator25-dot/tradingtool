@@ -363,7 +363,6 @@ export function HomeDashboard({
               <p className="font-semibold text-foreground">
                 {localize('Test mode · not logged in')}
               </p>
-              <p>{localize('Test mode scans markets only. Log in and start a new bot session to trade.')}</p>
             </div>
           ) : autoTradingSchedule ? (
             <div className="mt-3 space-y-1 rounded-lg border border-primary/20 bg-primary/[0.04] px-3 py-2 text-[10px] text-muted-foreground">

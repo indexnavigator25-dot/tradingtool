@@ -32,7 +32,6 @@ export interface StrategyRecoveryState {
   baseGroup: StrategyGroup;
   activeGroup: StrategyGroup;
   recoveryActive: boolean;
-  terminal: boolean;
 }
 
 export interface SavedBotSettings {
@@ -106,7 +105,6 @@ export function createStrategyRecoveryState(baseGroup: StrategyGroup): StrategyR
     baseGroup,
     activeGroup: baseGroup,
     recoveryActive: false,
-    terminal: false,
   };
 }
 
@@ -114,7 +112,7 @@ export function advanceStrategyRecoveryState(
   state: StrategyRecoveryState,
   settledProfit: number
 ): StrategyRecoveryState {
-  if (state.baseGroup === 'C' || state.terminal || !Number.isFinite(settledProfit) || settledProfit === 0) {
+  if (state.baseGroup === 'C' || !Number.isFinite(settledProfit) || settledProfit === 0) {
     return state;
   }
 
@@ -127,10 +125,7 @@ export function advanceStrategyRecoveryState(
   if (state.activeGroup === 'A') {
     return { ...state, activeGroup: 'B', recoveryActive: true };
   }
-  if (state.activeGroup === 'B') {
-    return { ...state, activeGroup: 'C', recoveryActive: true };
-  }
-  return { ...state, activeGroup: 'C', recoveryActive: true, terminal: true };
+  return { ...state, activeGroup: 'C', recoveryActive: true };
 }
 
 function compileTrigger(condition: string): DigitTrigger | null {

@@ -74,7 +74,6 @@ export interface AutoTradingScanProgress {
   baseGroup: StrategyGroup | null;
   activeGroup: StrategyGroup | null;
   recoveryActive: boolean;
-  recoveryTerminal: boolean;
   selectedMarket: string | null;
   selectedContractMode: Exclude<ContractMode, 'DIGITMATCH'> | null;
   estimatedWinRate: number | null;
@@ -1264,7 +1263,6 @@ export function useDigitsTrading({
           baseGroup: recoveryState?.baseGroup ?? null,
           activeGroup,
           recoveryActive: recoveryState?.recoveryActive ?? false,
-          recoveryTerminal: recoveryState?.terminal ?? false,
           selectedMarket: null,
           selectedContractMode: null,
           estimatedWinRate: null,
@@ -1613,9 +1611,7 @@ export function useDigitsTrading({
         if (recoveryState) {
           const previousRecoveryState = recoveryState;
           recoveryState = advanceStrategyRecoveryState(recoveryState, settledProfit);
-          if (recoveryState.terminal && !previousRecoveryState.terminal) {
-            toast.info(localize('Recovery reached Group C and will remain there after a loss.'));
-          } else if (
+          if (
             recoveryState.activeGroup === recoveryState.baseGroup &&
             previousRecoveryState.recoveryActive
           ) {

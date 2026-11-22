@@ -102,6 +102,14 @@ function contractDescription(
   }
 }
 
+const CONTRACT_DIRECTION_LABELS: Record<StrategyContractOption['contractMode'], string> = {
+  DIGITDIFF: 'Differs',
+  DIGITOVER: 'Over',
+  DIGITUNDER: 'Under',
+  DIGITEVEN: 'Even',
+  DIGITODD: 'Odd',
+};
+
 function normalizeBarrier(contractMode: Exclude<ContractMode, 'DIGITMATCH'>, value: number): number {
   const minimum = contractMode === 'DIGITUNDER' ? 1 : 0;
   const maximum = contractMode === 'DIGITOVER' ? 8 : 9;
@@ -675,21 +683,17 @@ export function QuickBotBuilder({
             <div className="space-y-3 rounded-lg border border-primary/20 bg-primary/[0.04] p-3 sm:p-4">
               <h5 className="text-xs font-semibold text-foreground">{localize('Then trade')}</h5>
               {contractOptions ? (
-                <div className="space-y-2">
-                  <Label>{localize('Directions in this group')}</Label>
-                  <div className="flex flex-wrap gap-2">
-                    {contractOptions.map((option) => (
-                      <span
-                        key={`${option.contractMode}:${option.barrier ?? ''}`}
-                        className="rounded-full border border-border/80 bg-background px-2.5 py-1 text-xs font-medium text-foreground"
-                      >
-                        {localize(option.contractDescription)}
-                      </span>
-                    ))}
-                  </div>
-                  <p className="text-[10px] leading-relaxed text-muted-foreground">
-                    {localize('The scanner compares every direction in this group across eligible markets and selects the best candidate.')}
-                  </p>
+                <div className="flex flex-wrap gap-2">
+                  {Array.from(new Set(contractOptions.map(
+                    (option) => CONTRACT_DIRECTION_LABELS[option.contractMode]
+                  ))).map((label) => (
+                    <span
+                      key={label}
+                      className="rounded-full border border-border/80 bg-background px-2.5 py-1 text-xs font-medium text-foreground"
+                    >
+                      {localize(label)}
+                    </span>
+                  ))}
                 </div>
               ) : (
                 <div className="grid gap-3 sm:grid-cols-2">
