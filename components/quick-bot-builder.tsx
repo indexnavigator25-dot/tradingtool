@@ -285,9 +285,8 @@ export function QuickBotBuilder({
           ))
           .join(' or ')
       : contractDescription(contractMode, barrier);
-    const entries = conditions.map(conditionDescription);
-    return `${contract} ${entries.join(' or ')}`;
-  }, [barrier, conditions, contractMode, contractOptions]);
+    return `${contract} · all entry conditions monitored automatically`;
+  }, [barrier, contractMode, contractOptions]);
   const selectedContractModes = contractOptions?.map((option) => option.contractMode) ??
     [contractMode];
   const builderGroup = selectedContractModes.includes('DIGITDIFF')
@@ -529,169 +528,14 @@ export function QuickBotBuilder({
                 {localize('AUTO PICK')}
               </span>
             </div>
-            {conditions.map((condition, index) => (
-              <article key={condition.id} className="space-y-3 rounded-lg border border-border/80 bg-card/70 p-3 sm:p-4">
-                <div className="flex items-center justify-between gap-2">
-                  <h5 className="text-xs font-semibold text-foreground">
-                    {localize('Condition {{number}}', { number: index + 1 })}
-                  </h5>
-                  {conditions.length > 1 && (
-                    <Button
-                      type="button"
-                      size="icon"
-                      variant="ghost"
-                      aria-label={localize('Remove condition {{number}}', { number: index + 1 })}
-                      onClick={() => setConditions((current) => current.filter((entry) => entry.id !== condition.id))}
-                      disabled={disabled}
-                    >
-                      <Trash2 />
-                    </Button>
-                  )}
-                </div>
-
-                {analysisType === 'pattern' && (
-                  <div className="space-y-1.5">
-                    <Label htmlFor={`quick-condition-kind-${condition.id}`}>{localize('Pattern')}</Label>
-                    <select
-                      id={`quick-condition-kind-${condition.id}`}
-                      value={condition.kind}
-                      onChange={(event) => updateCondition(condition.id, { kind: event.target.value as ConditionKind })}
-                      disabled={disabled}
-                      className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
-                    >
-                      <option value="digit">{localize('Last digit')}</option>
-                      <option value="parity-run">{localize('Even / odd run')}</option>
-                      <option value="range-run">{localize('High / low run')}</option>
-                      <option value="sequence">{localize('Digit sequence')}</option>
-                      <option value="loss-run">{localize('Contract-loss run')}</option>
-                    </select>
-                  </div>
-                )}
-
-                {condition.kind === 'digit' && (
-                  <div className="space-y-1.5">
-                    <Label htmlFor={`quick-condition-digit-${condition.id}`}>{localize('Last digit is')}</Label>
-                    <Input
-                      id={`quick-condition-digit-${condition.id}`}
-                      type="number"
-                      min="0"
-                      max="9"
-                      step="1"
-                      value={condition.digit}
-                      onChange={(event) => updateCondition(condition.id, { digit: event.target.value })}
-                      disabled={disabled}
-                    />
-                  </div>
-                )}
-
-                {(condition.kind === 'parity-run' || condition.kind === 'range-run') && (
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <div className="space-y-1.5">
-                      <Label htmlFor={`quick-condition-value-${condition.id}`}>
-                        {localize(condition.kind === 'parity-run' ? 'Parity' : 'Digit range')}
-                      </Label>
-                      <select
-                        id={`quick-condition-value-${condition.id}`}
-                        value={condition.kind === 'parity-run' ? condition.parity : condition.range}
-                        onChange={(event) => updateCondition(
-                          condition.id,
-                          condition.kind === 'parity-run'
-                            ? { parity: event.target.value as RuleCondition['parity'] }
-                            : { range: event.target.value as RuleCondition['range'] }
-                        )}
-                        disabled={disabled}
-                        className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
-                      >
-                        {condition.kind === 'parity-run' ? (
-                          <>
-                            <option value="even">{localize('Even')}</option>
-                            <option value="odd">{localize('Odd')}</option>
-                          </>
-                        ) : (
-                          <>
-                            <option value="high">{localize('High (5-9)')}</option>
-                            <option value="low">{localize('Low (0-4)')}</option>
-                          </>
-                        )}
-                      </select>
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label htmlFor={`quick-condition-length-${condition.id}`}>{localize('Consecutive digits')}</Label>
-                      <Input
-                        id={`quick-condition-length-${condition.id}`}
-                        type="number"
-                        min="1"
-                        max="8"
-                        step="1"
-                        value={condition.length}
-                        onChange={(event) => updateCondition(condition.id, { length: event.target.value })}
-                        disabled={disabled}
-                      />
-                    </div>
-                  </div>
-                )}
-
-                {condition.kind === 'loss-run' && (
-                  <div className="space-y-1.5">
-                    <Label htmlFor={`quick-condition-loss-length-${condition.id}`}>
-                      {localize('Consecutive losing digits')}
-                    </Label>
-                    <Input
-                      id={`quick-condition-loss-length-${condition.id}`}
-                      type="number"
-                      min="1"
-                      max="8"
-                      step="1"
-                      value={condition.length}
-                      onChange={(event) => updateCondition(condition.id, { length: event.target.value })}
-                      disabled={disabled}
-                    />
-                    <p className="text-[10px] leading-relaxed text-muted-foreground">
-                      {localize(contractOptions
-                        ? 'Losses are evaluated separately for each direction in this group.'
-                        : 'Losses use this bot’s contract and barrier.')}
-                    </p>
-                  </div>
-                )}
-
-                {condition.kind === 'sequence' && (
-                  <div className="space-y-1.5">
-                    <Label htmlFor={`quick-condition-sequence-${condition.id}`}>{localize('Digit sequence')}</Label>
-                    <Input
-                      id={`quick-condition-sequence-${condition.id}`}
-                      value={condition.sequence}
-                      onChange={(event) => updateCondition(condition.id, { sequence: event.target.value })}
-                      placeholder={localize('Example: 1, 2, 3')}
-                      disabled={disabled}
-                    />
-                    <p className="text-[10px] text-muted-foreground">
-                      {localize('Enter two to five digits separated by commas.')}
-                    </p>
-                  </div>
-                )}
-              </article>
-            ))}
-
-            {conditions.length < 5 && (
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="w-full border-dashed"
-                onClick={() => {
-                  setConditions((current) => [
-                    ...current,
-                    createCondition(nextConditionId, analysisType === 'sequence' ? 'sequence' : 'parity-run'),
-                  ]);
-                  setNextConditionId((current) => current + 1);
-                  setSaveError(null);
-                }}
-                disabled={disabled}
-              >
-                <Plus />
-                {localize('Add condition')}
-              </Button>
-            )}
+            <div className="rounded-lg border border-primary/20 bg-primary/[0.04] px-3 py-2.5">
+              <p className="text-xs font-medium text-foreground">
+                {localize('All conditions are monitored automatically')}
+              </p>
+              <p className="mt-1 text-[10px] leading-relaxed text-muted-foreground">
+                {localize('The scanner ranks every market and contract using the strongest live condition.')}
+              </p>
+            </div>
 
             <div className="space-y-3 rounded-lg border border-primary/20 bg-primary/[0.04] p-3 sm:p-4">
               <h5 className="text-xs font-semibold text-foreground">{localize('Then trade')}</h5>

@@ -3,7 +3,15 @@ import type { ActiveSymbol } from '@deriv/core';
 import type { ContractMode } from '@/lib/types';
 
 export const MARKET_SCAN_TICK_COUNT = 1000;
-export const MARKET_SCAN_TIMEOUT_MS = 15_000;
+export const MARKET_SCAN_MIN_TIMEOUT_MS = 10_000;
+export const MARKET_SCAN_MAX_TIMEOUT_MS = 15_000;
+export const MARKET_SCAN_TIMEOUT_MS = MARKET_SCAN_MAX_TIMEOUT_MS;
+
+export function getMarketScanWindowMs(): number {
+  const range = MARKET_SCAN_MAX_TIMEOUT_MS - MARKET_SCAN_MIN_TIMEOUT_MS;
+  return MARKET_SCAN_MIN_TIMEOUT_MS +
+    Math.floor(Math.random() * (range + 1));
+}
 
 export interface MarketScanScoreFactors {
   historicalWinRate: number;

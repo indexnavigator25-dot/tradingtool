@@ -24,6 +24,8 @@ import {
   chooseBestHistoricalScanCandidate,
   getContractBarrier,
   getScannableMarkets,
+  getMarketScanWindowMs,
+  MARKET_SCAN_MAX_TIMEOUT_MS,
   MARKET_SCAN_TIMEOUT_MS,
   MARKET_SCAN_TICK_COUNT,
   isRecoveryCandidateQualified,
@@ -188,12 +190,14 @@ async function scanMarkets(
   ws: NonNullable<UseBaseTradingParams['ws']>,
   symbols: ActiveSymbol[],
   strategy: UserTradingStrategy,
+  scanWindowMs: number,
   shouldStop: () => boolean,
   subscribeToActiveTicks: ActiveTickSubscriber,
   historyCache: Map<string, MarketHistoryCacheEntry>,
   historyRequestScheduler: MarketHistoryRequestScheduler,
   onProgress: MarketScanProgressCallback
 ): Promise<MarketScanResult | null | typeof CONNECTION_LOST> {
+  const scanStartedAt = Date.now();
   const openSymbols = Array.from(
     new Map(
       getScannableMarkets(symbols).map((symbol) => [symbol.underlying_symbol, symbol])
@@ -538,7 +542,8 @@ async function scanMarkets(
       if (
         !finished &&
         availableFeeds > 0 &&
-        openSymbols.every(isMarketReady)
+        openSymbols.every(isMarketReady) &&
+        Date.now() - scanStartedAt >= scanWindowMs
       ) {
         finish(getScanResult());
       }
@@ -571,7 +576,7 @@ async function scanMarkets(
           finish(result);
         }
       }
-    }, MARKET_SCAN_TIMEOUT_MS);
+    }, MARKET_SCAN_MAX_TIMEOUT_MS);
     removeConnectionListener = ws.onConnectionStateChange((connected) => {
       if (!connected) finish(CONNECTION_LOST);
     });
@@ -1132,6 +1137,7 @@ export function useDigitsTrading({
     let reachedThreshold: AutoTradingThresholdResult | null = null;
     const rejectedCandidates = new Map<string, number>();
     const skippedUnfavorableCandidates = new Set<string>();
+    let lastSelectedCandidateKey: string | null = null;
     const marketHistoryCache = new Map<string, MarketHistoryCacheEntry>();
     const historyRequestScheduler: MarketHistoryRequestScheduler = {
       nextRequestAt: 0,
@@ -1276,6 +1282,7 @@ export function useDigitsTrading({
           tradingWs,
           eligibleMarkets,
           activeStrategy,
+          getMarketScanWindowMs(),
           () => session.stopRequested || Date.now() >= scheduleDeadlineAt,
           subscribeToActiveTicks,
           marketHistoryCache,
@@ -1318,14 +1325,18 @@ export function useDigitsTrading({
             candidate.barrier
           );
           const rejectedUntil = rejectedCandidates.get(key);
-          if (rejectedUntil === undefined) return true;
+          if (rejectedUntil === undefined) {
+            return key !== lastSelectedCandidateKey;
+          }
           if (rejectedUntil <= Date.now()) {
             rejectedCandidates.delete(key);
-            return true;
+            return key !== lastSelectedCandidateKey;
           }
           return false;
         });
-        const candidatePool = candidatesToEvaluate;
+        const candidatePool = candidatesToEvaluate.length > 0
+          ? candidatesToEvaluate
+          : scanResult.candidates;
         const recoveryActive = recoveryState?.recoveryActive ?? false;
         const signalCandidates = candidatePool.filter((candidate) =>
           isTradingCandidateQualified(candidate)
@@ -1473,7 +1484,9 @@ export function useDigitsTrading({
                 }
               : progress
           );
-          await new Promise((resolve) => setTimeout(resolve, MARKET_SCAN_TIMEOUT_MS));
+          await new Promise((resolve) =>
+            setTimeout(resolve, getMarketScanWindowMs())
+          );
           if (session.stopRequested) break;
           continue;
         }
@@ -1606,6 +1619,11 @@ export function useDigitsTrading({
         }
         clearBuyResult();
         setAutoTradingScanProgress(null);
+        lastSelectedCandidateKey = getScanCandidateKey(
+          candidate.symbol.underlying_symbol,
+          candidate.contractMode,
+          candidate.barrier
+        );
         const purchaseMinute = Math.floor(
           (purchaseStartedAt - scheduleStartedAt) / 60_000
         );

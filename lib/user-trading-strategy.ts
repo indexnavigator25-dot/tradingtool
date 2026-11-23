@@ -22,6 +22,7 @@ export interface UserTradingStrategy {
   barrier: number | null;
   contractOptions: StrategyContractOption[];
   triggers: DigitTrigger[];
+  automaticConditions?: boolean;
   description: string;
   contractDescription: string;
 }
@@ -109,6 +110,7 @@ export function createStrategyForGroup(
 
   return {
     ...strategy,
+    automaticConditions: true,
     contractMode: firstOption.contractMode,
     barrier: firstOption.barrier,
     contractOptions,
@@ -266,15 +268,13 @@ export function compileUserTradingStrategy(description: string): StrategyCompila
   }
 
   const conditionStart = normalized.search(/\b(?:when|after)\b/i);
-  if (conditionStart < 0) {
-    return {
-      strategy: null,
-      error: 'Include an entry condition using “when” or “after”.',
-    };
-  }
-
-  const contractText = normalized.slice(0, conditionStart).toLowerCase();
-  const conditionText = normalized.slice(conditionStart).toLowerCase();
+  const contractText = (conditionStart < 0
+    ? normalized
+    : normalized.slice(0, conditionStart)
+  ).toLowerCase();
+  const conditionText = conditionStart < 0
+    ? ''
+    : normalized.slice(conditionStart).toLowerCase();
   const contractOptions: StrategyContractOption[] = [];
   const addContractOption = (option: StrategyContractOption) => {
     if (!contractOptions.some(
@@ -338,22 +338,22 @@ export function compileUserTradingStrategy(description: string): StrategyCompila
   )))
     .join(' / ');
 
-  const triggerParts = conditionText.split(/\s+(?:and|or)\s+/i);
-  const triggers = triggerParts.map(compileTrigger);
-  if (triggers.length === 0 || triggers.some((trigger) => trigger === null)) {
-    return {
-      strategy: null,
-      error: 'Entry condition not recognized. Use a last digit, digit sequence, or consecutive winning/losing, even/odd, or high/low digits.',
-    };
-  }
+  const triggers = conditionText.trim()
+    ? conditionText.split(/\s+(?:and|or)\s+/i).map(compileTrigger).filter(
+        (trigger): trigger is DigitTrigger => trigger !== null
+      )
+    : [];
 
   return {
     strategy: {
       contractMode,
       barrier,
       contractOptions,
-      triggers: triggers.filter((trigger): trigger is DigitTrigger => trigger !== null),
-      description: formatUserTradingStrategyDescription(normalized),
+      triggers,
+      automaticConditions: true,
+      description: formatUserTradingStrategyDescription(
+        contractDescription || normalized
+      ),
       contractDescription,
     },
     error: null,
@@ -399,6 +399,65 @@ function triggerMatches(
   }
 }
 
+export function getAutomaticTriggers(digits: number[] = []): DigitTrigger[] {
+  const triggers: DigitTrigger[] = [];
+
+  for (let digit = 0; digit <= 9; digit += 1) {
+    triggers.push({
+      kind: 'digit',
+      digit,
+      description: `when the last digit is ${digit}`,
+    });
+  }
+
+  for (const parity of ['even', 'odd'] as const) {
+    for (let length = 1; length <= 8; length += 1) {
+      triggers.push({
+        kind: 'parity-run',
+        parity,
+        length,
+        description: `after ${length} consecutive ${parity} digits`,
+      });
+    }
+  }
+
+  for (const range of ['high', 'low'] as const) {
+    for (let length = 1; length <= 8; length += 1) {
+      triggers.push({
+        kind: 'range-run',
+        range,
+        length,
+        description: `after ${length} consecutive ${range} digits`,
+      });
+    }
+  }
+
+  for (let length = 1; length <= 8; length += 1) {
+    triggers.push({
+      kind: 'loss-run',
+      length,
+      description: `after ${length} consecutive losing digits`,
+    });
+  }
+
+  for (let length = 2; length <= 5; length += 1) {
+    const sequences = new Map<string, number[]>();
+    for (let endIndex = length; endIndex < digits.length; endIndex += 1) {
+      const sequence = digits.slice(endIndex - length, endIndex);
+      sequences.set(sequence.join(','), sequence);
+    }
+    sequences.forEach((sequence) => {
+      triggers.push({
+        kind: 'sequence',
+        digits: sequence,
+        description: `after the sequence ${sequence.join(', ')}`,
+      });
+    });
+  }
+
+  return triggers;
+}
+
 function isWinningDigit(
   digit: number,
   contractMode: StrategyContractOption['contractMode'],
@@ -437,10 +496,13 @@ export function evaluateUserTradingStrategy(
   const predictionPrices = prices
     .filter(Number.isFinite)
     .slice(-MARKET_SCAN_TICK_COUNT);
-  if (strategy.contractOptions.length === 0 || strategy.triggers.length === 0) return [];
+  if (strategy.contractOptions.length === 0) return [];
 
   const pipSize = pipSizeFromPip(symbol.pip_size);
   const digits = predictionPrices.map((price) => getLastDigit(price, pipSize));
+  const triggers = strategy.automaticConditions
+    ? getAutomaticTriggers(digits)
+    : strategy.triggers;
   const candidates: MarketScanCandidate[] = [];
   const addCandidate = (
     contractOption: StrategyContractOption,
@@ -482,7 +544,7 @@ export function evaluateUserTradingStrategy(
     const baselineOutcomes = digits.slice(1).map((digit) =>
       isWinningDigit(digit, contractOption.contractMode, contractOption.barrier)
     );
-    for (const trigger of strategy.triggers) {
+    for (const trigger of triggers) {
       const triggerLength = getTriggerLength(trigger);
       const minimumWindow = triggerLength;
       if (digits.length < minimumWindow) continue;
