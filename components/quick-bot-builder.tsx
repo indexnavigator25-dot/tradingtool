@@ -11,6 +11,7 @@ import {
 } from '@/lib/user-trading-strategy';
 import { TRADING_DEFAULTS } from '@/lib/trading-defaults';
 import type {
+  RecoveryGroupSelection,
   SavedBotSettings,
   StrategyContractOption,
   UserTradingStrategy,
@@ -188,6 +189,8 @@ export function QuickBotBuilder({
   const [contractOptions, setContractOptions] = useState<StrategyContractOption[] | null>(null);
   const [durationDraft, setDurationDraft] = useState(String(duration));
   const [recoveryEnabled, setRecoveryEnabled] = useState(false);
+  const [recoveryGroup, setRecoveryGroup] =
+    useState<RecoveryGroupSelection>('auto');
   const [previewLoaded, setPreviewLoaded] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [savedNotice, setSavedNotice] = useState<string | null>(null);
@@ -253,6 +256,7 @@ export function QuickBotBuilder({
       result.strategy.contractOptions.length > 1 ? result.strategy.contractOptions : null
     );
     setRecoveryEnabled(previewBot.recoveryEnabled ?? false);
+    setRecoveryGroup(previewBot.recoveryGroup ?? 'auto');
     onStakeChange(previewBot.stake ?? TRADING_DEFAULTS.stake);
     onDurationChange(previewBot.duration ?? TRADING_DEFAULTS.duration);
     onTakeProfitChange(previewBot.takeProfit ?? TRADING_DEFAULTS.takeProfit);
@@ -293,13 +297,12 @@ export function QuickBotBuilder({
       : selectedContractModes.length > 0
         ? 'B'
         : null;
-  const isOneTickStrategy = builderGroup === 'A' || builderGroup === 'C';
   const compilation = useMemo(
     () => compileUserTradingStrategy(description),
     [description]
   );
-  const parsedDuration = isOneTickStrategy ? 1 : Number(durationDraft);
-  const isDurationDraftValid = isOneTickStrategy || (
+  const parsedDuration = Number(durationDraft);
+  const isDurationDraftValid = (
     Number.isInteger(parsedDuration) &&
     parsedDuration >= 1 &&
     parsedDuration <= 200
@@ -325,6 +328,7 @@ export function QuickBotBuilder({
     setBarrier('1');
     setContractOptions(null);
     setRecoveryEnabled(false);
+    setRecoveryGroup('auto');
     setDurationDraft(String(TRADING_DEFAULTS.duration));
     onStakeChange(TRADING_DEFAULTS.stake);
     onDurationChange(TRADING_DEFAULTS.duration);
@@ -383,6 +387,7 @@ export function QuickBotBuilder({
       duration: parsedDuration,
       recoveryEnabled,
       recoveryMultiplier: martingaleMultiplier,
+      recoveryGroup,
       takeProfit,
       stopLoss,
     };
@@ -498,7 +503,7 @@ export function QuickBotBuilder({
                 min="1"
                 max="200"
                 step="1"
-                value={isOneTickStrategy ? '1' : durationDraft}
+                value={durationDraft}
                 onChange={(event) => {
                   const value = event.target.value;
                   setDurationDraft(value);
@@ -509,13 +514,8 @@ export function QuickBotBuilder({
                   setSaveError(null);
                   setSavedNotice(null);
                 }}
-                disabled={disabled || isOneTickStrategy}
+                disabled={disabled}
               />
-              {isOneTickStrategy && (
-                <p className="text-[10px] text-muted-foreground">
-                  {localize('Group A and Group C signals use 1-tick contracts.')}
-                </p>
-              )}
             </div>
           </div>
 
@@ -850,6 +850,26 @@ export function QuickBotBuilder({
                 }}
                 disabled={disabled || !recoveryEnabled}
               />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="quick-bot-recovery-group">{localize('Recovery group')}</Label>
+              <select
+                id="quick-bot-recovery-group"
+                value={recoveryGroup}
+                onChange={(event) => {
+                  setRecoveryGroup(event.target.value as RecoveryGroupSelection);
+                  setSaveError(null);
+                  setSavedNotice(null);
+                }}
+                disabled={disabled || !recoveryEnabled}
+                className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
+              >
+                <option value="auto">{localize('Automatic levels')}</option>
+                <option value="A">{localize('Group A')}</option>
+                <option value="B">{localize('Group B')}</option>
+                <option value="C">{localize('Group C')}</option>
+                <option value="none">{localize('None — same group')}</option>
+              </select>
             </div>
           </section>
 

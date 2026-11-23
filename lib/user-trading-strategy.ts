@@ -27,11 +27,13 @@ export interface UserTradingStrategy {
 }
 
 export type StrategyGroup = 'A' | 'B' | 'C';
+export type RecoveryGroupSelection = 'auto' | 'none' | StrategyGroup;
 
 export interface StrategyRecoveryState {
   baseGroup: StrategyGroup;
   activeGroup: StrategyGroup;
   recoveryActive: boolean;
+  recoveryGroup: RecoveryGroupSelection;
 }
 
 export interface SavedBotSettings {
@@ -40,6 +42,7 @@ export interface SavedBotSettings {
   duration?: number;
   recoveryEnabled?: boolean;
   recoveryMultiplier?: string;
+  recoveryGroup?: RecoveryGroupSelection;
   takeProfit?: string;
   stopLoss?: string;
 }
@@ -113,11 +116,15 @@ export function createStrategyForGroup(
   };
 }
 
-export function createStrategyRecoveryState(baseGroup: StrategyGroup): StrategyRecoveryState {
+export function createStrategyRecoveryState(
+  baseGroup: StrategyGroup,
+  recoveryGroup: RecoveryGroupSelection = 'auto'
+): StrategyRecoveryState {
   return {
     baseGroup,
     activeGroup: baseGroup,
     recoveryActive: false,
+    recoveryGroup,
   };
 }
 
@@ -129,16 +136,25 @@ export function advanceStrategyRecoveryState(
     return state;
   }
 
-  if (state.baseGroup === 'C') {
-    return settledProfit < 0
-      ? { ...state, activeGroup: 'C', recoveryActive: true }
-      : { ...state, activeGroup: 'C', recoveryActive: false };
-  }
-
   if (settledProfit > 0) {
     return state.recoveryActive
       ? { ...state, activeGroup: state.baseGroup, recoveryActive: false }
       : state;
+  }
+
+  if (state.recoveryGroup === 'none') {
+    return settledProfit < 0
+      ? { ...state, activeGroup: state.baseGroup, recoveryActive: true }
+      : state;
+  }
+
+  if (state.recoveryGroup === 'A' || state.recoveryGroup === 'B' ||
+    state.recoveryGroup === 'C') {
+    return { ...state, activeGroup: state.recoveryGroup, recoveryActive: true };
+  }
+
+  if (state.baseGroup === 'C') {
+    return { ...state, activeGroup: 'C', recoveryActive: true };
   }
 
   if (state.activeGroup === 'A') {

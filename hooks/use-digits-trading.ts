@@ -1159,7 +1159,10 @@ export function useDigitsTrading({
     }
     const baseGroup = getStrategyGroup(strategy);
     let recoveryState: StrategyRecoveryState | null = baseGroup && recoveryEnabled
-      ? createStrategyRecoveryState(baseGroup)
+      ? createStrategyRecoveryState(
+          baseGroup,
+          settings.recoveryGroup ?? 'auto'
+        )
       : null;
     let scanNumber = 0;
     let minuteWindowIndex = 0;
@@ -1484,13 +1487,6 @@ export function useDigitsTrading({
         if (!connected) break;
 
         const barrier = candidate.barrier ?? undefined;
-        const candidateDuration = candidate.contractMode === 'DIGITDIFF' ||
-          candidate.contractMode === 'DIGITEVEN' ||
-          candidate.contractMode === 'DIGITODD' ||
-          (candidate.contractMode === 'DIGITOVER' && candidate.barrier === 0) ||
-          (candidate.contractMode === 'DIGITUNDER' && candidate.barrier === 9)
-          ? 1
-          : tradeDuration;
         const proposalParams = {
           proposal: 1,
           amount: nextStake,
@@ -1498,7 +1494,7 @@ export function useDigitsTrading({
           contract_type: candidate.contractMode,
           currency: 'USD',
           underlying_symbol: market.underlying_symbol,
-          duration: candidateDuration,
+          duration: tradeDuration,
           duration_unit: 't',
           ...(barrier !== undefined ? { barrier } : {}),
         };

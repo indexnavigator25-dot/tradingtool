@@ -9,6 +9,7 @@ import {
   formatUserTradingStrategyDescription,
 } from '@/lib/user-trading-strategy';
 import type { SavedBotSettings, StrategyCompilation } from '@/lib/user-trading-strategy';
+import type { RecoveryGroupSelection } from '@/lib/user-trading-strategy';
 import { TRADING_DEFAULTS } from '@/lib/trading-defaults';
 
 const SAVED_BOTS_STORAGE_KEY = 'factorpulse:saved-bots:v1';
@@ -23,6 +24,7 @@ export interface SavedBot {
   duration?: number;
   recoveryEnabled?: boolean;
   recoveryMultiplier?: string;
+  recoveryGroup?: RecoveryGroupSelection;
   takeProfit?: string;
   stopLoss?: string;
 }
@@ -58,6 +60,9 @@ function isSavedBot(value: unknown): value is SavedBot {
     (!('duration' in value) ||
       (typeof value.duration === 'number' && Number.isInteger(value.duration) && value.duration > 0)) &&
     (!('recoveryEnabled' in value) || typeof value.recoveryEnabled === 'boolean') &&
+    (!('recoveryGroup' in value) ||
+      (typeof value.recoveryGroup === 'string' &&
+        ['auto', 'none', 'A', 'B', 'C'].includes(value.recoveryGroup))) &&
     (!('recoveryMultiplier' in value) ||
       (typeof value.recoveryMultiplier === 'string' &&
         (value.recoveryMultiplier.trim() === '' ||
@@ -421,6 +426,10 @@ export function SavedBotsPanel({
                       {bot.recoveryEnabled === true && ` · ${localize('Recovery: {{value}}×', {
                         value: bot.recoveryMultiplier ?? TRADING_DEFAULTS.recoveryMultiplier,
                       })}`}
+                      {bot.recoveryEnabled === true && bot.recoveryGroup && bot.recoveryGroup !== 'auto' &&
+                        ` · ${bot.recoveryGroup === 'none'
+                          ? localize('Same group')
+                          : localize('Recovery Group {{group}}', { group: bot.recoveryGroup })}`}
                       {bot.recoveryEnabled !== true && ` · ${localize('Recovery off')}`}
                     </p>
                   )}
